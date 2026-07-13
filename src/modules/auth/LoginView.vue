@@ -17,6 +17,7 @@ const reviewers = [
   { name: '吴凯立', phone: '18771903739' },
   { name: '王斌林', phone: '13971005568' },
   { name: '陈支源', phone: '15623150061' },
+  { name: '徐露', phone: '19872071002' },
 ]
 
 function handleLogin() {
@@ -55,8 +56,10 @@ function handleLogin() {
     <!-- 左侧品牌区 -->
     <aside class="login-brand">
       <div class="brand-content">
-        <h1 class="brand-title">硚孝高速王母湖收费站<br />绿通快检系统</h1>
-        <p class="brand-subtitle">X透视成像 · AI大数据模型 · 创新查验机制</p>
+        <div class="brand-heading">
+          <h1 class="brand-title">硚孝高速王母湖收费站绿通快检系统</h1>
+          <p class="brand-subtitle">X透视成像 · AI大数据模型 · 创新查验机制</p>
+        </div>
         <ul class="brand-features">
           <li>货物智能识别，自动标定</li>
           <li>车头智能识别，安全避让</li>
@@ -144,24 +147,33 @@ function handleLogin() {
 }
 
 .brand-content {
-  max-width: 420px;
+  width: 100%;
+  max-width: 680px;
   color: #fff;
 }
 
-.brand-title {
-  font-size: 20px;
-  font-weight: 700;
-  line-height: 1.5;
+.brand-heading {
   text-align: center;
-  margin-bottom: 16px;
+  margin-bottom: 36px;
+}
+
+.brand-title {
+  font-size: 36px;
+  font-weight: 700;
+  line-height: 1.4;
+  color: #fff;
+  margin: 0 0 12px;
+  white-space: nowrap;
 }
 
 .brand-subtitle {
-  font-size: 14px;
-  font-weight: 700;
-  text-align: center;
-  color: rgba(255, 255, 255, 0.8);
-  margin-bottom: 32px;
+  font-size: 20px;
+  font-weight: 500;
+  line-height: 1.5;
+  color: #fff;
+  margin: 0;
+  white-space: nowrap;
+  letter-spacing: 0.5px;
 }
 
 .brand-features {
@@ -169,7 +181,8 @@ function handleLogin() {
   font-size: 11pt;
   color: rgba(255, 255, 255, 0.8);
   line-height: 2;
-  margin-bottom: 24px;
+  text-align: center;
+  margin-bottom: 48px;
   padding-left: 20px;
 }
 
