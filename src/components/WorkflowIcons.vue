@@ -128,120 +128,59 @@ const cellWidthPct = `${(SEGMENT_PIX / SCENE_WIDTH) * 100}%`
 
 <style scoped lang="scss">
 
-/* 图标区：比 Qt 24/48 放大，贴近截图视觉比例 */
-
+/* Qt: icon_lc 48x24, icon_xray 24x24, label 11pt bold */
 .workflow-icons {
-
-  padding: 8px 0 4px;
-
+  padding: 6px 0;
   flex-shrink: 0;
-
-  min-height: 72px;
-
 }
-
-
 
 .workflow-row {
-
   display: flex;
-
   align-items: flex-start;
-
   width: 100%;
-
 }
-
-
 
 .lead-spacer {
-
   flex-shrink: 0;
-
 }
-
-
 
 .wf-btn {
-
   flex-shrink: 0;
-
   display: flex;
-
   flex-direction: column;
-
   align-items: flex-start;
-
-  justify-content: flex-start;
-
-  gap: 4px;
-
+  gap: 2px;
   padding: 0;
-
   border: none;
-
   background: transparent;
-
   cursor: pointer;
-
   min-width: 0;
 
-
-
   &:hover {
-
     opacity: 0.9;
-
   }
-
 }
-
-
 
 .wf-icon {
-
-  width: 40px;
-
-  height: 40px;
-
+  width: 24px;
+  height: 24px;
   object-fit: contain;
 
-  image-rendering: auto;
-
-
-
   &.wide {
-
-    width: 80px;
-
-    height: 40px;
-
+    width: 48px;
+    height: 24px;
   }
-
 }
 
-
-
 .wf-label {
-
-  font-size: 14px;
-
+  font-size: 11px;
   font-weight: bold;
-
   color: #333;
-
   white-space: nowrap;
 
-  line-height: 1.2;
-
-
-
   &.active {
-
     color: #059669;
-
   }
-
 }
 
 </style>

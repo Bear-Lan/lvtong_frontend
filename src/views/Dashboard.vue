@@ -435,19 +435,13 @@ function onWorkflowClick(key: WorkflowStepKey) {
 
 
 .dashboard {
-
   display: flex;
-
   flex-direction: column;
-
-  width: $design-width;
-
-  height: $design-height;
-
+  width: 100vw;
+  height: 100vh;
+  min-width: $min-app-width;
   background: #f0f0f0;
-
   overflow: hidden;
-
 }
 
 
@@ -483,19 +477,11 @@ function onWorkflowClick(key: WorkflowStepKey) {
 
 
 .panel-right {
-
   flex: 728;
-
   display: flex;
-
   flex-direction: column;
-
-  min-width: 722px;
-
-  max-width: 728px;
-
+  min-width: 0;
   overflow: hidden;
-
 }
 
 

@@ -18,7 +18,8 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <ScreenScaler>
+  <ScreenScaler v-if="appConfig.enableScreenScale">
     <router-view />
   </ScreenScaler>
+  <router-view v-else />
 </template>
