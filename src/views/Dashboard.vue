@@ -440,11 +440,9 @@ function onWorkflowClick(key: WorkflowStepKey) {
 
   flex-direction: column;
 
-  width: 100vw;
+  width: $design-width;
 
-  height: 100vh;
-
-  min-width: $min-app-width;
+  height: $design-height;
 
   background: #f0f0f0;
 

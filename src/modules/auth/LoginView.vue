@@ -284,9 +284,8 @@ function handleLogin() {
 
 .login-page {
   display: flex;
-  width: 100vw;
-  height: 100vh;
-  min-width: 1010px;
+  width: $design-width;
+  height: $design-height;
   background: #fff;
   overflow: hidden;
 }

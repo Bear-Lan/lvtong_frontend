@@ -22,6 +22,10 @@ $reject-red: #ef4444;
 $header-height: 48px;
 $min-app-width: 1896px;
 
+// 自适应缩放设计基准（与 src/config/layout.ts 保持一致）
+$design-width: 1920px;
+$design-height: 1080px;
+
 // Qt 布局比例
 $left-panel-width: 1168px;
 $right-panel-width: 722px;
