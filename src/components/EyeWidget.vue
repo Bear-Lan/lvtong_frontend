@@ -2,9 +2,10 @@
 import { ref, watch } from 'vue'
 
 const props = defineProps<{
-  title?: string
   placeholder?: string
   imageUrl?: string
+  /** 对齐 Qt label_body / label_transparent：72pt 水印 */
+  large?: boolean
 }>()
 
 const displayText = ref(props.placeholder ?? '')
@@ -18,7 +19,7 @@ watch(
 </script>
 
 <template>
-  <div class="eye-widget">
+  <div class="eye-widget" :class="{ large }">
     <img v-if="imageUrl" :src="imageUrl" class="eye-image" alt="" />
     <span v-else class="eye-placeholder">{{ displayText }}</span>
   </div>
@@ -29,10 +30,11 @@ watch(
 
 .eye-widget {
   width: 100%;
-  height: 100%;
-  min-height: 280px;
+  flex: 1;
+  min-height: 0;
   background: #fff;
   border-bottom: 2px solid $border-color;
+  border-radius: 0 0 12px 12px;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -49,5 +51,14 @@ watch(
 .eye-placeholder {
   font-size: 28px;
   color: $text-placeholder;
+}
+
+.eye-widget.large .eye-placeholder {
+  font-family: 'SimSun', '新宋体', serif;
+  font-size: 72px;
+  font-weight: bold;
+  color: #bbb;
+  line-height: 1;
+  user-select: none;
 }
 </style>

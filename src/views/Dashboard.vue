@@ -10,11 +10,8 @@ import EyeWidget from '@/components/EyeWidget.vue'
 
 import PreviewButton from '@/components/PreviewButton.vue'
 
-import WorkflowIcons from '@/components/WorkflowIcons.vue'
-
-import HardwareStatusBar from '@/components/HardwareStatusBar.vue'
-
-import TruckScene from '@/components/TruckScene.vue'
+import BottomWorkflowPanel from '@/components/BottomWorkflowPanel.vue'
+import type { WorkflowStepKey } from '@/components/WorkflowIcons.vue'
 
 import BookingDialog from '@/modules/booking/BookingDialog.vue'
 
@@ -27,13 +24,13 @@ const showBooking = ref(false)
 /** 流程区状态 — 登录后初始为空闲，无预约、无来车 */
 const workflow = ref({
   bookingActive: false,
-  radarOnline: false,
   distance: 0,
 })
 
 
 
 const gammaValue = ref(2.0)
+const gammaText = ref('2.00')
 
 const whiteValue = ref(128)
 
@@ -89,6 +86,22 @@ function simulateBooking() {
 
 }
 
+function onGammaBlur() {
+  const n = Number.parseFloat(gammaText.value)
+  if (!Number.isNaN(n)) {
+    gammaValue.value = n
+    gammaText.value = n.toFixed(2)
+  } else {
+    gammaText.value = gammaValue.value.toFixed(2)
+  }
+}
+
+function onWorkflowClick(key: WorkflowStepKey) {
+  if (key === 'book') {
+    showBooking.value = true
+  }
+}
+
 </script>
 
 
@@ -111,7 +124,7 @@ function simulateBooking() {
 
         <div class="panel-card panel-stretch">
 
-          <div class="panel-header">
+          <div class="panel-header panel-header-body">
 
             <img src="/assets/img/a_car.png" class="panel-icon" alt="" />
 
@@ -123,7 +136,7 @@ function simulateBooking() {
 
             </button>
 
-            <button class="header-icon-btn" title="切换视角">
+            <button class="header-icon-btn header-icon-swap" title="切换视角">
 
               <img src="/assets/img/a_leftright.png" alt="" />
 
@@ -131,9 +144,11 @@ function simulateBooking() {
 
             <PreviewButton label="预览" />
 
+            <span class="header-spacer" />
+
           </div>
 
-          <EyeWidget placeholder="车身影像" />
+          <EyeWidget large placeholder="车身影像" />
 
         </div>
 
@@ -143,7 +158,7 @@ function simulateBooking() {
 
         <div class="panel-card panel-stretch">
 
-          <div class="panel-header panel-header-wrap">
+          <div class="panel-header panel-header-xray">
 
             <img src="/assets/img/a_xray.png" class="panel-icon" alt="" />
 
@@ -153,27 +168,25 @@ function simulateBooking() {
 
             <span class="xray-label">灰场</span>
 
-            <input v-model.number="gammaValue" type="number" step="0.5" min="0" max="5" class="xray-input" />
+            <input
+              v-model="gammaText"
+              type="text"
+              inputmode="decimal"
+              class="xray-spin is-active"
+              @blur="onGammaBlur"
+            />
 
             <span class="xray-label">亮场</span>
 
-            <input v-model.number="whiteValue" type="number" step="16" min="0" max="255" class="xray-input xray-input-int" />
+            <input v-model.number="whiteValue" type="number" step="16" min="0" max="255" class="xray-spin" />
 
             <button class="action-btn">删除</button>
 
             <button class="action-btn">渲染</button>
 
-            <button class="header-icon-btn" title="切换视角" disabled>
-
-              <img src="/assets/img/a_leftright.png" alt="" />
-
-            </button>
-
-            <PreviewButton label="预览" />
-
           </div>
 
-          <EyeWidget placeholder="透视影像" />
+          <EyeWidget large placeholder="透视影像" />
 
         </div>
 
@@ -183,14 +196,11 @@ function simulateBooking() {
 
         <div class="panel-card panel-bottom">
 
-          <WorkflowIcons
+          <BottomWorkflowPanel
             :booking-active="workflow.bookingActive"
-            :radar-online="workflow.radarOnline"
+            :distance="workflow.distance"
+            @workflow-click="onWorkflowClick"
           />
-
-          <TruckScene :distance="workflow.distance" />
-
-          <HardwareStatusBar />
 
         </div>
 
@@ -524,13 +534,17 @@ function simulateBooking() {
 
 .panel-bottom {
 
-  flex: 0 0 auto;
+  flex: 0 0 200px;
+
+  max-height: 200px;
 
   min-height: 150px;
 
   display: flex;
 
   flex-direction: column;
+
+  overflow: hidden;
 
 }
 
@@ -584,6 +598,15 @@ function simulateBooking() {
 
 
 
+.panel-header-xray {
+  flex-wrap: nowrap;
+  gap: 6px;
+
+  .panel-title {
+    margin-right: 0;
+  }
+}
+
 .panel-header-wrap {
 
   flex-wrap: wrap;
@@ -618,12 +641,26 @@ function simulateBooking() {
 
 
 
+.panel-header-body {
+  .panel-title {
+    margin-right: 0;
+  }
+}
+
 .panel-header .panel-title,
-
 .form-header .panel-title {
-
   margin-right: auto;
+}
 
+.header-spacer {
+  flex: 0 0 40px;
+  width: 40px;
+  margin-left: auto;
+}
+
+.header-icon-swap img {
+  width: 16px;
+  height: 16px;
 }
 
 
@@ -679,6 +716,28 @@ function simulateBooking() {
 }
 
 
+
+.xray-spin {
+  width: 56px;
+  height: 24px;
+  border: 1px solid #c5d5f8;
+  border-radius: 3px;
+  padding: 0 6px;
+  font-size: 12px;
+  text-align: center;
+  background: #fff;
+  outline: none;
+
+  &.is-active {
+    background: #dbeafe;
+    border-color: #93b4f5;
+  }
+
+  &:focus {
+    background: #dbeafe;
+    border-color: #60a5fa;
+  }
+}
 
 .xray-input {
 

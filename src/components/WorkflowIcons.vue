@@ -1,120 +1,249 @@
 <script setup lang="ts">
-import { computed } from 'vue'
 
-/** 对齐 Qt LvTongPro::initializeUI 常量 */
-const SCENE_WIDTH = 1148
-const START_POS_X = 170
-const TOTAL_METERS = 48
-const METER_PIX = SCENE_WIDTH / TOTAL_METERS
-const SEGMENT_METERS = 8
+import { SEGMENT_PIX, START_POS_X, SCENE_WIDTH } from '@/constants/workflowLayout'
+
+
+
+export type WorkflowStepKey = 'book' | 'gate' | 'xray' | 'camera' | 'audit'
+
+
 
 interface WorkflowItem {
-  key: string
+
+  key: WorkflowStepKey
+
   label: string
+
   icon: string
-  iconOnline?: string
-  iconWidth: number
+
+  wide?: boolean
+
 }
+
+
 
 const props = withDefaults(
+
   defineProps<{
-    /** 是否已按下预约（对应 m_btnPrebookState） */
+
     bookingActive?: boolean
-    /** 雷达是否在线（影响预约图标） */
-    radarOnline?: boolean
+
   }>(),
+
   {
+
     bookingActive: false,
-    radarOnline: false,
+
   },
+
 )
 
+
+
+const emit = defineEmits<{
+
+  click: [key: WorkflowStepKey]
+
+}>()
+
+
+
 const items: WorkflowItem[] = [
-  { key: 'book', label: '预约', icon: '/assets/img/a_lc_offline.png', iconOnline: '/assets/img/a_lc_online.png', iconWidth: 48 },
-  { key: 'gate', label: '闸机', icon: '/assets/img/a_zj.png', iconWidth: 48 },
-  { key: 'xray', label: '光机', icon: '/assets/img/xray_offline.png', iconWidth: SEGMENT_METERS * METER_PIX },
-  { key: 'camera', label: '拍照', icon: '/assets/img/a_xj_offline.png', iconOnline: '/assets/img/a_xj_online.png', iconWidth: SEGMENT_METERS * METER_PIX },
-  { key: 'audit', label: '审核', icon: '/assets/img/a_sh.png', iconWidth: SEGMENT_METERS * METER_PIX },
+
+  { key: 'book', label: '预约', icon: '/assets/img/a_lc_online.png', wide: true },
+
+  { key: 'gate', label: '闸机', icon: '/assets/img/a_zj.png', wide: true },
+
+  { key: 'xray', label: '光机', icon: '/assets/img/xray_online.png' },
+
+  { key: 'camera', label: '拍照', icon: '/assets/img/a_xj_offline.png' },
+
+  { key: 'audit', label: '审核', icon: '/assets/img/a_sh.png' },
+
 ]
 
-/** 与 graphicsScene 节点 X 对齐 */
-const nodePositions = computed(() => {
-  const offsets = [10, 10 + SEGMENT_METERS * METER_PIX, 10 + SEGMENT_METERS * METER_PIX * 2 + 15, 10 + SEGMENT_METERS * METER_PIX * 4 + 60, 10 + SEGMENT_METERS * METER_PIX * 5 + 70]
-  return offsets.map((offset) => START_POS_X + offset)
-})
 
-function itemLeft(index: number) {
-  return `${(nodePositions.value[index] / SCENE_WIDTH) * 100}%`
-}
 
-function itemIcon(item: WorkflowItem) {
-  if (item.key === 'book' && props.radarOnline && item.iconOnline) {
-    return item.iconOnline
-  }
-  return item.icon
-}
+const leadSpacerPct = `${(START_POS_X / SCENE_WIDTH) * 100}%`
+
+const cellWidthPct = `${(SEGMENT_PIX / SCENE_WIDTH) * 100}%`
+
 </script>
 
+
+
 <template>
+
   <div class="workflow-icons">
-    <div class="workflow-track" :style="{ width: `${SCENE_WIDTH}px` }">
-      <div
-        v-for="(item, index) in items"
+
+    <div class="workflow-row">
+
+      <div class="lead-spacer" :style="{ width: leadSpacerPct }" />
+
+      <button
+
+        v-for="item in items"
+
         :key="item.key"
-        class="workflow-item"
-        :style="{ left: itemLeft(index), width: `${item.iconWidth}px` }"
+
+        type="button"
+
+        class="wf-btn"
+
+        :style="{ width: cellWidthPct }"
+
+        :title="item.label"
+
+        @click="emit('click', item.key)"
+
       >
+
         <img
-          :src="itemIcon(item)"
+
+          :src="item.icon"
+
           :alt="item.label"
-          class="icon"
-          :style="{ width: `${Math.min(item.iconWidth, 48)}px` }"
+
+          class="wf-icon"
+
+          :class="{ wide: item.wide }"
+
         />
-        <span class="label" :class="{ active: item.key === 'book' && bookingActive }">
+
+        <span class="wf-label" :class="{ active: item.key === 'book' && bookingActive }">
+
           {{ item.label }}
+
         </span>
-      </div>
+
+      </button>
+
     </div>
+
   </div>
+
 </template>
 
+
+
 <style scoped lang="scss">
+
+/* 图标区：比 Qt 24/48 放大，贴近截图视觉比例 */
+
 .workflow-icons {
-  padding: 6px 0 10px;
-  overflow: hidden;
-  display: flex;
-  justify-content: flex-start;
-  min-height: 54px;
+
+  padding: 8px 0 4px;
+
+  flex-shrink: 0;
+
+  min-height: 72px;
+
 }
 
-.workflow-track {
-  position: relative;
-  height: 40px;
-  max-width: 100%;
-}
 
-.workflow-item {
-  position: absolute;
-  top: 0;
+
+.workflow-row {
+
   display: flex;
-  flex-direction: column;
+
   align-items: flex-start;
-  gap: 2px;
+
+  width: 100%;
+
 }
 
-.icon {
-  height: 24px;
+
+
+.lead-spacer {
+
+  flex-shrink: 0;
+
+}
+
+
+
+.wf-btn {
+
+  flex-shrink: 0;
+
+  display: flex;
+
+  flex-direction: column;
+
+  align-items: flex-start;
+
+  justify-content: flex-start;
+
+  gap: 4px;
+
+  padding: 0;
+
+  border: none;
+
+  background: transparent;
+
+  cursor: pointer;
+
+  min-width: 0;
+
+
+
+  &:hover {
+
+    opacity: 0.9;
+
+  }
+
+}
+
+
+
+.wf-icon {
+
+  width: 40px;
+
+  height: 40px;
+
   object-fit: contain;
+
+  image-rendering: auto;
+
+
+
+  &.wide {
+
+    width: 80px;
+
+    height: 40px;
+
+  }
+
 }
 
-.label {
-  font-size: 11px;
+
+
+.wf-label {
+
+  font-size: 14px;
+
   font-weight: bold;
+
   color: #333;
+
   white-space: nowrap;
 
+  line-height: 1.2;
+
+
+
   &.active {
+
     color: #059669;
+
   }
+
 }
+
 </style>
+
+
