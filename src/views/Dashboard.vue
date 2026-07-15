@@ -102,6 +102,16 @@ function onWorkflowClick(key: WorkflowStepKey) {
   }
 }
 
+function onBookingAccept() {
+  workflow.value.bookingActive = true
+  showBooking.value = false
+}
+
+function onBookingReject() {
+  workflow.value.bookingActive = false
+  showBooking.value = false
+}
+
 </script>
 
 
@@ -420,7 +430,12 @@ function onWorkflowClick(key: WorkflowStepKey) {
 
 
 
-    <BookingDialog v-if="showBooking" @close="showBooking = false" />
+    <BookingDialog
+      v-if="showBooking"
+      @close="showBooking = false"
+      @accept="onBookingAccept"
+      @reject="onBookingReject"
+    />
 
   </div>
 
