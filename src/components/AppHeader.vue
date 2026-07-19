@@ -1,4 +1,7 @@
 <script setup lang="ts">
+import { ref } from 'vue'
+import { useAuthStore } from '@/stores/useAuthStore'
+
 defineProps<{
   username?: string
 }>()
@@ -6,6 +9,22 @@ defineProps<{
 const emit = defineEmits<{
   toolClick: [tip: string]
 }>()
+
+const auth = useAuthStore()
+const userMenuOpen = ref(false)
+
+function toggleUserMenu() {
+  userMenuOpen.value = !userMenuOpen.value
+}
+
+function closeUserMenu() {
+  userMenuOpen.value = false
+}
+
+function handleLogout() {
+  userMenuOpen.value = false
+  auth.logout()
+}
 
 const tools = [
   { key: 'history', icon: '/assets/img/s_record.png', tip: '历史记录' },
@@ -36,17 +55,26 @@ const tools = [
         <img :src="t.icon" :alt="t.tip" />
       </button>
 
-      <span class="user-name">{{ username ?? '系统管理员' }}</span>
+      <div class="user-area" @click="toggleUserMenu">
+        <span class="user-avatar">👤</span>
+        <span class="user-name">{{ username ?? '系统管理员' }}</span>
+        <span class="user-arrow" :class="{ open: userMenuOpen }">▼</span>
 
-      <button class="win-btn" title="最小化">
-        <img src="/assets/img/s_min.png" alt="最小化" />
-      </button>
-      <button class="win-btn" title="最大化">
-        <img src="/assets/img/s_max.png" alt="最大化" />
-      </button>
-      <button class="win-btn" title="关闭">
-        <img src="/assets/img/s_close.png" alt="关闭" />
-      </button>
+        <div v-if="userMenuOpen" class="user-dropdown" @click.stop>
+          <div class="dropdown-item user-detail">
+            <span class="detail-label">当前用户</span>
+            <span class="detail-value">{{ username ?? '系统管理员' }}</span>
+          </div>
+          <div class="dropdown-item user-detail" v-if="auth.user">
+            <span class="detail-label">角色</span>
+            <span class="detail-value">{{ auth.user.role === 1 ? '管理员' : '操作员' }}</span>
+          </div>
+          <div class="dropdown-divider" />
+          <button class="dropdown-item logout-btn" @click="handleLogout">
+            <span>退出登录</span>
+          </button>
+        </div>
+      </div>
     </div>
   </header>
 </template>
@@ -98,8 +126,7 @@ const tools = [
   margin-right: 40px;
 }
 
-.tool-btn,
-.win-btn {
+.tool-btn {
   background: transparent;
   border: none;
   padding: 4px;
@@ -115,18 +142,97 @@ const tools = [
   }
 }
 
+.user-area {
+  position: relative;
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 12px;
+  height: 48px;
+  cursor: pointer;
+  border-left: 1px dashed #ccc;
+  border-right: 1px dashed #ccc;
+  user-select: none;
+
+  &:hover {
+    background: #f5f5f5;
+  }
+}
+
+.user-avatar {
+  font-size: 16px;
+  line-height: 1;
+}
+
 .user-name {
   font-size: 12px;
   font-weight: bold;
   color: #999;
-  margin-left: auto;
-  margin-right: 8px;
-  padding: 0 12px;
   white-space: nowrap;
-  border-left: 1px dashed #ccc;
-  border-right: 1px dashed #ccc;
-  height: 48px;
+}
+
+.user-arrow {
+  font-size: 8px;
+  color: #999;
+  transition: transform 0.2s;
+
+  &.open {
+    transform: rotate(180deg);
+  }
+}
+
+.user-dropdown {
+  position: absolute;
+  top: 100%;
+  right: 0;
+  min-width: 180px;
+  background: #fff;
+  border: 1px solid #e5e7eb;
+  border-radius: 6px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.12);
+  z-index: 1000;
+  overflow: hidden;
+}
+
+.dropdown-item {
   display: flex;
+  justify-content: space-between;
   align-items: center;
+  padding: 10px 14px;
+  font-size: 13px;
+  width: 100%;
+  border: none;
+  background: none;
+  cursor: pointer;
+}
+
+.user-detail {
+  cursor: default;
+
+  .detail-label {
+    color: #999;
+    font-size: 12px;
+  }
+
+  .detail-value {
+    color: #333;
+    font-weight: 500;
+  }
+}
+
+.dropdown-divider {
+  height: 1px;
+  background: #e5e7eb;
+  margin: 0;
+}
+
+.logout-btn {
+  color: #ef4444;
+  justify-content: center;
+
+  &:hover {
+    background: #fef2f2;
+  }
 }
 </style>
