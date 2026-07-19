@@ -172,6 +172,10 @@ async function handleLogin() {
   padding: 40px 30px;
 }
 
+<<<<<<< HEAD
+=======
+/* 初版 1.25 倍：与右侧对称，居中放大 */
+>>>>>>> b4ad2e5197c1c1613f5e15483a0c602ab3457ea6
 .brand-content {
   width: 100%;
   max-width: 850px;
@@ -230,6 +234,11 @@ async function handleLogin() {
   color: #c7c3c7;
 }
 
+<<<<<<< HEAD
+=======
+
+
+>>>>>>> b4ad2e5197c1c1613f5e15483a0c602ab3457ea6
 .login-form-area {
   flex: 0 0 50%;
   width: 50%;
@@ -262,6 +271,10 @@ async function handleLogin() {
   margin: 0 auto;
 }
 
+<<<<<<< HEAD
+=======
+/* 初版 1.25 倍：440px 基准等比放大，整体垂直居中 */
+>>>>>>> b4ad2e5197c1c1613f5e15483a0c602ab3457ea6
 .form-header {
   display: flex;
   align-items: center;
@@ -437,6 +450,7 @@ async function handleLogin() {
   font-size: 15pt;
   font-weight: bold;
   transition: background 0.2s;
+<<<<<<< HEAD
   cursor: pointer;
 
   &:hover:not(:disabled) {
@@ -451,6 +465,16 @@ async function handleLogin() {
     opacity: 0.6;
     cursor: not-allowed;
   }
+=======
+
+  &:hover {
+    background: #70d0b1;
+  }
+
+  &:active {
+    background: #4fa88b;
+  }
+>>>>>>> b4ad2e5197c1c1613f5e15483a0c602ab3457ea6
 }
 
 .form-divider {
@@ -470,4 +494,11 @@ async function handleLogin() {
     margin-left: 5px;
   }
 }
+<<<<<<< HEAD
 </style>
+=======
+
+</style>
+
+
+>>>>>>> b4ad2e5197c1c1613f5e15483a0c602ab3457ea6
