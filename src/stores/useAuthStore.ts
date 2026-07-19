@@ -77,7 +77,6 @@ export const useAuthStore = defineStore('auth', () => {
     user.value = null
     reviewerPhone.value = ''
     reviewerName.value = ''
-<<<<<<< HEAD
     error.value = ''
     localStorage.removeItem('lvtong_token')
     localStorage.removeItem('lvtong_user')
@@ -113,10 +112,4 @@ export const useAuthStore = defineStore('auth', () => {
     restoreUser,
     initAuth,
   }
-=======
-    localStorage.removeItem('lvtong_token')
-  }
-
-  return { user, reviewerPhone, reviewerName, login, logout }
->>>>>>> b4ad2e5197c1c1613f5e15483a0c602ab3457ea6
 })
