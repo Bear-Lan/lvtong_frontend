@@ -30,14 +30,15 @@ function handleLogout() {
 
 function handleToolClick(key: string) {
   switch (key) {
-    case 'history':
-      router.push('/history')
-      break
     case 'user':
       router.push('/users')
       break
+    case 'history':
     case 'device':
-      // 由父组件处理设备状态弹窗
+    case 'stop':
+    case 'plc':
+    case 'ai':
+      // 由主界面 Dashboard 处理弹窗（对齐 Qt 弹窗而非跳转页面）
       emit('toolClick', key)
       break
     default:

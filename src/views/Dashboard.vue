@@ -14,11 +14,16 @@ import AgriculturalSelect from '@/components/AgriculturalSelect.vue'
 import LicensePlateEdit from '@/components/LicensePlateEdit.vue'
 import DeviceStatusPanel from '@/components/DeviceStatusPanel.vue'
 import QtMessageBox from '@/components/common/QtMessageBox.vue'
+import HistoryDialog from '@/modules/history/HistoryDialog.vue'
+import type { HistoryRecord } from '@/modules/history'
+import { useRouter } from 'vue-router'
 
 const auth = useAuthStore()
 const wsStore = useWsStore()
+const router = useRouter()
 
 const showBooking = ref(false)
+const showHistory = ref(false)
 const workflow = ref({
   bookingActive: false,
   distance: 0,
@@ -273,6 +278,28 @@ function onStopClick() {
   showStopConfirmBox.value = true
 }
 
+/** 顶栏工具 — 对齐 LvTongPro::onHistoryClicked / onStopClicked / 设备状态 */
+function onHeaderToolClick(key: string) {
+  if (key === 'history') {
+    showHistory.value = true
+    return
+  }
+  if (key === 'device') {
+    deviceStatusRef.value?.show()
+    return
+  }
+  if (key === 'stop') {
+    onStopClick()
+  }
+}
+
+/** 查看详情 — 对齐 HistoryDialog 打开 DetailDialog */
+function onHistoryDetail(record: HistoryRecord) {
+  if (!record?.id) return
+  showHistory.value = false
+  router.push(`/detail/${record.id}`)
+}
+
 async function onStopConfirmYes() {
   showStopConfirmBox.value = false
   try {
@@ -319,7 +346,7 @@ onUnmounted(() => {
   <div class="dashboard">
     <AppHeader
       :username="auth.user?.realName"
-      @tool-click="(key: string) => { if (key === 'device') deviceStatusRef?.show(); else if (key === 'stop') onStopClick(); }"
+      @tool-click="onHeaderToolClick"
     />
 
     <div class="dashboard-body">
@@ -518,6 +545,13 @@ onUnmounted(() => {
 
     <!-- 设备状态弹窗 -->
     <DeviceStatusPanel ref="deviceStatusRef" />
+
+    <!-- 历史记录查询 — 对齐 HistoryDialog -->
+    <HistoryDialog
+      v-if="showHistory"
+      @close="showHistory = false"
+      @detail="onHistoryDetail"
+    />
 
     <!-- 急停确认 — 对齐 QMessageBox::question 系统提醒 / 确定执行急停操作？ -->
     <QtMessageBox
