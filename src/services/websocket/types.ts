@@ -12,7 +12,15 @@ export const WsMessageType = {
   DeviceStatus: 'device_status',
   VehicleInfo: 'vehicle_info',
   ImageUpdate: 'image_update',
+  /** PLC 预约按键 / 来车 — 应对齐弹 OrderDialog */
   BookingRequest: 'booking_request',
+  /** 兼容后端 push_booking_event */
+  Booking: 'booking',
+  BookingAccepted: 'booking_accepted',
+  BookingRejected: 'booking_rejected',
+  PlcStatus: 'plc_status',
+  RadarDistance: 'radar_distance',
+  DetectionStep: 'detection_step',
   VideoSignal: 'video_signal',
   Pong: 'pong',
   Error: 'error',

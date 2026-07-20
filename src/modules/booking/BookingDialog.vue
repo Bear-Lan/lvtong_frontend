@@ -13,98 +13,108 @@ const emit = defineEmits<{
 
 const {
   loading,
+  submitting,
   radarImageUrl,
   linePosition,
   xrayEnabled,
   confirmVisible,
   pendingConfirm,
+  errorMessage,
   vehicleTypeIcon,
   vehicleTypeTip,
   xrayLabel,
   xrayLabelClass,
   xrayIcon,
   imgInfoText,
+  videoStreamUrl,
   refreshRadarImage,
   toggleVehicleType,
   requestConfirm,
   cancelConfirm,
-  buildAcceptPayload,
-  api,
+  confirmYes,
 } = useBookingDialog()
 
 async function handleConfirmYes() {
-  const kind = pendingConfirm.value?.kind
-  confirmVisible.value = false
-  pendingConfirm.value = null
-
-  if (kind === 'accept') {
-    const payload = buildAcceptPayload()
-    await api.stopVideoSession()
-    await api.acceptBooking(payload)
-    emit('accept', payload)
-    emit('close')
-  } else if (kind === 'reject' || kind === 'close') {
-    await api.stopVideoSession()
-    await api.rejectBooking()
-    emit('reject')
-    emit('close')
+  try {
+    const result = await confirmYes()
+    if (result?.kind === 'accept') {
+      emit('accept', result.payload)
+      emit('close')
+    } else if (result?.kind === 'reject') {
+      emit('reject')
+      emit('close')
+    }
+  } catch {
+    // errorMessage 已写入，保持弹窗打开
   }
 }
 
 function onOverlayClick() {
+  if (submitting.value) return
   requestConfirm('close')
 }
 
 function onRejectClick() {
+  if (submitting.value) return
   requestConfirm('reject')
 }
 
 function onAcceptClick() {
+  if (submitting.value) return
   requestConfirm('accept')
 }
 </script>
 
 <template>
   <div class="booking-overlay" @click.self="onOverlayClick">
-    <div class="booking-dialog" @click.stop>
+    <div class="booking-dialog" role="dialog" aria-modal="true" @click.stop>
       <h2 class="dialog-title">预约处理</h2>
 
-      <!-- 预览区：512×256 × 2 -->
+      <!-- 预览区：512×256 × 2 — 对齐 OrderDialog left/rightImageLabel -->
       <div class="preview-row">
         <RadarImagePanel
           v-model:line-position="linePosition"
           :image-url="radarImageUrl"
           :darkness="0"
+          always-show-line
         />
         <div class="video-panel">
-          <span class="video-placeholder">视频对讲区域</span>
+          <img
+            v-if="videoStreamUrl"
+            :src="videoStreamUrl"
+            class="video-stream"
+            alt="视频对讲"
+          />
+          <span v-else class="video-placeholder">视频对讲区域</span>
         </div>
       </div>
 
-      <!-- 工具行：刷新 + 车头信息 + 警告 -->
+      <!-- 工具行：刷新 + 车头信息 + 警告 — 对齐 horizontalLayout_tools -->
       <div class="tool-row">
         <span class="row-spacer row-spacer-40" />
         <button
           type="button"
           class="btn-refresh"
           title="点击刷新"
-          :disabled="loading"
+          :disabled="loading || submitting"
           @click="refreshRadarImage"
         >
           <img src="/assets/img/a_refresh.png" alt="刷新" />
         </button>
-        <span class="img-info" :title="'刷新'">{{ imgInfoText }}</span>
+        <span class="img-info" :title="imgInfoText">{{ imgInfoText }}</span>
         <span class="warning-text">请认真确认分界线位置，确保安全！</span>
         <span class="row-spacer row-spacer-300" />
-        <!-- Qt 中 mic/spk 默认隐藏 -->
-        <button type="button" class="btn-hidden" hidden>
+        <!-- Qt 中 mic/spk 默认隐藏；对讲成功后由后端返回流再显 -->
+        <button type="button" class="btn-hidden" hidden aria-hidden="true">
           <img src="/assets/img/a_mic_open.png" alt="" />
         </button>
-        <button type="button" class="btn-hidden" hidden>
+        <button type="button" class="btn-hidden" hidden aria-hidden="true">
           <img src="/assets/img/a_speaker_close.png" alt="" />
         </button>
         <span class="row-spacer row-spacer-220" />
       </div>
+
+      <p v-if="errorMessage" class="error-tip">{{ errorMessage }}</p>
 
       <!-- 底栏：车型 + 透视开关 + 驳回/受理 -->
       <div class="bottom-row">
@@ -114,6 +124,7 @@ function onAcceptClick() {
           type="button"
           class="btn-vehicle"
           :title="vehicleTypeTip"
+          :disabled="submitting"
           @click="toggleVehicleType"
         >
           <img :src="vehicleTypeIcon" :alt="vehicleTypeTip" />
@@ -128,12 +139,22 @@ function onAcceptClick() {
 
         <span class="row-flex" />
 
-        <button type="button" class="btn-reject" @click="onRejectClick">
+        <button
+          type="button"
+          class="btn-reject"
+          :disabled="submitting"
+          @click="onRejectClick"
+        >
           <img src="/assets/img/a_dismiss.png" alt="" />
           驳 回
         </button>
         <span class="row-spacer row-spacer-200" />
-        <button type="button" class="btn-accept" @click="onAcceptClick">
+        <button
+          type="button"
+          class="btn-accept"
+          :disabled="submitting"
+          @click="onAcceptClick"
+        >
           <img src="/assets/img/a_accept.png" alt="" />
           受 理
         </button>
@@ -204,15 +225,22 @@ function onAcceptClick() {
   width: 512px;
   height: 256px;
   flex-shrink: 0;
-  background: #1a1a2e;
+  background: transparent;
   border: 2px solid #ddd;
   display: flex;
   align-items: center;
   justify-content: center;
+  overflow: hidden;
+}
+
+.video-stream {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
 }
 
 .video-placeholder {
-  color: #aaa;
+  color: #666;
   font-size: 16px;
 }
 
@@ -293,6 +321,12 @@ function onAcceptClick() {
   font-family: 'Microsoft YaHei', sans-serif;
 }
 
+.error-tip {
+  margin: 0 24px;
+  font-size: 12px;
+  color: #c0392b;
+}
+
 .label-vehicle {
   font-size: 14px;
   color: $text-dark;
@@ -312,6 +346,11 @@ function onAcceptClick() {
     width: 96px;
     height: 60px;
     object-fit: contain;
+  }
+
+  &:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
   }
 }
 
@@ -364,8 +403,13 @@ function onAcceptClick() {
     height: 20px;
   }
 
-  &:hover {
+  &:hover:not(:disabled) {
     color: #fff;
+  }
+
+  &:disabled {
+    opacity: 0.55;
+    cursor: wait;
   }
 }
 

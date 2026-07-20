@@ -5,6 +5,8 @@ const props = defineProps<{
   imageUrl?: string | null
   linePosition: number
   darkness?: number
+  /** 无图时也显示红线 — 对齐 ImageLabelWithLine 默认可交互 */
+  alwaysShowLine?: boolean
 }>()
 
 const emit = defineEmits<{
@@ -15,6 +17,7 @@ const dragging = ref(false)
 const panelRef = ref<HTMLElement | null>(null)
 
 const linePercent = computed(() => `${props.linePosition * 100}%`)
+const showLine = computed(() => props.alwaysShowLine || !!props.imageUrl)
 
 function clampPosition(clientX: number) {
   const el = panelRef.value
@@ -26,6 +29,7 @@ function clampPosition(clientX: number) {
 }
 
 function onPointerDown(e: PointerEvent) {
+  if (!showLine.value) return
   const el = panelRef.value
   if (!el) return
   const rect = el.getBoundingClientRect()
@@ -59,7 +63,7 @@ watch(
   <div
     ref="panelRef"
     class="radar-panel"
-    :class="{ 'is-dragging': dragging, 'has-image': !!imageUrl }"
+    :class="{ 'is-dragging': dragging, 'has-line': showLine }"
     @pointerdown="onPointerDown"
     @pointermove="onPointerMove"
     @pointerup="onPointerUp"
@@ -68,7 +72,7 @@ watch(
     <img v-if="imageUrl" :src="imageUrl" class="radar-image" alt="雷达来车图" />
     <span v-else class="radar-placeholder">雷达测量来车信息区域</span>
 
-    <template v-if="imageUrl">
+    <template v-if="showLine">
       <div
         class="radar-mask"
         :style="{ width: linePercent, opacity: (darkness ?? 0) / 255 }"
@@ -84,13 +88,13 @@ watch(
   width: 512px;
   height: 256px;
   flex-shrink: 0;
-  background: #1a1a2e;
+  background: transparent;
   border: 2px solid #ddd;
   overflow: hidden;
   cursor: default;
   user-select: none;
 
-  &.has-image {
+  &.has-line {
     cursor: col-resize;
   }
 
@@ -113,7 +117,7 @@ watch(
   display: flex;
   align-items: center;
   justify-content: center;
-  color: #aaa;
+  color: #666;
   font-size: 16px;
 }
 

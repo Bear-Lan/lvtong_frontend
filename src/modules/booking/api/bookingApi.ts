@@ -1,92 +1,134 @@
-import type { BookingAcceptPayload, RadarImageResponse } from '../types'
+/**
+ * 预约 API 适配器 — Http / Mock
+ * 实现 BookingPort，对接 lvtong-backend /api/booking/*
+ */
+import type { BookingPort } from '../ports/bookingPort'
+import type {
+  BookingAcceptPayload,
+  BookingOpenResult,
+  BookingProcessState,
+  RadarImageResponse,
+} from '../types'
 import { request } from '@/api/request'
 
-/** 预约弹窗后端接口 */
-export interface BookingApi {
-  /** 拉取雷达来车图 — 对齐 Qt onRefreshClicked → GET headurl */
-  fetchRadarImage(): Promise<RadarImageResponse | null>
-  /** 弹窗打开时初始化 — 对齐 Qt onRefreshOrderDialog */
-  onDialogOpen(): Promise<void>
-  /** 停止视频对讲 — 对齐 Qt stopSpCamera */
-  stopVideoSession(): Promise<void>
-  /** 受理 — 对齐 Qt onAcceptClicked 后续调度 */
-  acceptBooking(payload: BookingAcceptPayload): Promise<void>
-  /** 驳回 — 对齐 Qt onRejectClicked */
-  rejectBooking(): Promise<void>
-}
-
-const DEFAULT_HEAD_WIDTH = 1.5
+/** 默认车头宽度（米）— 对齐 config radar.headDefaultWidth */
+export const DEFAULT_HEAD_WIDTH = 1.5
 
 /** 真实 HTTP 实现 */
-export function createHttpBookingApi(): BookingApi {
+export function createHttpBookingApi(): BookingPort {
   return {
     async fetchRadarImage() {
       const res = await request<RadarImageResponse>('/booking/radar-image')
+      if (res.code === 0 && res.data?.imageUrl) {
+        return res.data
+      }
+      // 允许无图：返回 data 供高度等字段使用，或 null
+      if (res.code === 0 && res.data) {
+        return res.data.imageUrl ? res.data : null
+      }
+      console.warn('[BookingPort] 雷达图像获取失败:', res.message)
+      return null
+    },
+
+    async openDialog() {
+      // 对齐 onRefreshOrderDialog：设备侧效应由后端执行
+      const res = await request<BookingOpenResult>('/booking/open', { method: 'POST' })
       if (res.code === 0 && res.data) {
         return res.data
       }
-      console.warn('[BookingApi] 雷达图像获取失败:', res.message)
-      return null
+      // 兼容旧后端仅有 /state
+      const stateRes = await request<BookingProcessState>('/booking/state')
+      return {
+        videoStreamUrl: null,
+        devicesReady: false,
+        state: stateRes.code === 0 ? stateRes.data ?? undefined : undefined,
+      }
     },
-    async onDialogOpen() {
-      // 获取当前预约状态
-      await request('/booking/state')
-    },
+
     async stopVideoSession() {
-      // 停止视频对讲 — 由后端设备中间层处理
-      await request('/booking/stop-video', { method: 'POST' })
+      try {
+        await request('/booking/stop-video', { method: 'POST' })
+      } catch (e) {
+        // 后端未就绪时不阻断受理/驳回主流程
+        console.warn('[BookingPort] stop-video 失败（可忽略）:', e)
+      }
     },
+
     async acceptBooking(payload: BookingAcceptPayload) {
+      const body: BookingAcceptPayload = {
+        ...payload,
+        acceptanceTime: payload.acceptanceTime ?? new Date().toISOString(),
+      }
       const res = await request('/booking/accept', {
         method: 'POST',
-        body: JSON.stringify(payload),
+        body: JSON.stringify(body),
       })
       if (res.code !== 0) {
         throw new Error(res.message || '受理失败')
       }
     },
+
     async rejectBooking() {
       const res = await request('/booking/reject', { method: 'POST' })
       if (res.code !== 0) {
         throw new Error(res.message || '驳回失败')
       }
     },
-  }
-}
 
-/** Mock 实现（开发阶段使用） */
-export function createMockBookingApi(): BookingApi {
-  return {
-    async fetchRadarImage() {
+    async getState() {
+      const res = await request<BookingProcessState>('/booking/state')
+      if (res.code === 0 && res.data) return res.data
       return null
     },
-    async onDialogOpen() {},
+  }
+}
+
+/** Mock 实现 — 本地无后端时联调 UI */
+export function createMockBookingApi(): BookingPort {
+  return {
+    async fetchRadarImage() {
+      // 返回 null：UI 显示「雷达测量来车信息区域」占位（对齐 Qt 无图态）
+      return null
+    },
+    async openDialog() {
+      return { videoStreamUrl: null, devicesReady: true }
+    },
     async stopVideoSession() {},
-    async acceptBooking() {
-      console.info('[BookingApi] mock accept')
+    async acceptBooking(payload) {
+      console.info('[BookingPort] mock accept', payload)
     },
     async rejectBooking() {
-      console.info('[BookingApi] mock reject')
+      console.info('[BookingPort] mock reject')
+    },
+    async getState() {
+      return {
+        is_detection: false,
+        last_booking_state: false,
+        booking_dialog_shown: false,
+        btn_prebook_state: false,
+        car_height: 3.0,
+        car_length: DEFAULT_HEAD_WIDTH,
+        is_check_xray: true,
+        check_step: 0,
+        radar_count: 0,
+      }
     },
   }
 }
 
-let bookingApi: BookingApi
+let bookingApi: BookingPort
 
-// 根据环境选择实现
 const useMock = import.meta.env.VITE_USE_MOCK === 'true'
-if (useMock) {
-  bookingApi = createMockBookingApi()
-} else {
-  bookingApi = createHttpBookingApi()
-}
+bookingApi = useMock ? createMockBookingApi() : createHttpBookingApi()
 
-export function getBookingApi(): BookingApi {
+export function getBookingApi(): BookingPort {
   return bookingApi
 }
 
-export function setBookingApi(api: BookingApi): void {
+export function setBookingApi(api: BookingPort): void {
   bookingApi = api
 }
 
-export { DEFAULT_HEAD_WIDTH }
+/** @deprecated 使用 getBookingApi */
+export const getBookingPort = getBookingApi
+export const setBookingPort = setBookingApi

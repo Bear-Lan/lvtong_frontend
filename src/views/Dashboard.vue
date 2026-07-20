@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted, onUnmounted, ref } from 'vue'
+import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { useAuthStore } from '@/stores/useAuthStore'
 import { useWsStore } from '@/stores/useWsStore'
 import { request } from '@/api/request'
@@ -16,17 +16,28 @@ import DeviceStatusPanel from '@/components/DeviceStatusPanel.vue'
 import QtMessageBox from '@/components/common/QtMessageBox.vue'
 import HistoryDialog from '@/modules/history/HistoryDialog.vue'
 import type { HistoryRecord } from '@/modules/history'
+import { useBookingStore } from '@/modules/booking'
+import type { BookingAcceptPayload, BookingComingPayload } from '@/modules/booking'
 import { useRouter } from 'vue-router'
 
 const auth = useAuthStore()
 const wsStore = useWsStore()
+const bookingStore = useBookingStore()
 const router = useRouter()
 
-const showBooking = ref(false)
 const showHistory = ref(false)
 const workflow = ref({
   bookingActive: false,
   distance: 0,
+})
+
+/** 弹窗可见：与 Pinia 同步 — 对齐 m_pOrderDialog->show */
+const showBooking = computed({
+  get: () => bookingStore.dialogVisible,
+  set: (v: boolean) => {
+    if (v) bookingStore.openDialog()
+    else bookingStore.closeDialog()
+  },
 })
 
 // ---- 下拉选项 ----
@@ -158,22 +169,37 @@ const captureButtons = [
   { key: 'evidence', label: '证据照' },
 ]
 
-// ---- 预约 ----
-function simulateBooking() {
-  showBooking.value = true
+// ---- 预约 — 对齐 LvTongPro::onCarComingClicked / onBookingDebounceTimeout ----
+function openBookingDialog() {
+  // 检测中不弹窗
+  bookingStore.openDialog()
+  workflow.value.bookingActive = bookingStore.bookingActive
 }
+
 function onWorkflowClick(key: WorkflowStepKey) {
   if (key === 'book') {
-    showBooking.value = true
+    openBookingDialog()
   }
 }
-function onBookingAccept() {
+
+function onBookingAccept(payload: BookingAcceptPayload) {
+  bookingStore.applyAccept(payload)
   workflow.value.bookingActive = true
-  showBooking.value = false
 }
+
 function onBookingReject() {
+  bookingStore.applyReject()
   workflow.value.bookingActive = false
-  showBooking.value = false
+}
+
+/** WS 来车/按键预约 → 自动弹窗 */
+function handleBookingComing(msg: { data?: BookingComingPayload | Record<string, unknown> }) {
+  const data = (msg.data ?? {}) as BookingComingPayload
+  const action = data.action
+  // push_booking_event: coming / book_button；或纯 booking_request
+  if (!action || action === 'coming' || action === 'book_button') {
+    openBookingDialog()
+  }
 }
 
 // ---- 重置 / 确认 ----
@@ -270,6 +296,28 @@ function setupWS() {
 
   wsStore.subscribe('detection_step', (msg) => {
     console.log('[WS] 检测步骤:', msg.data)
+  })
+
+  // 对齐 PLC bookingStatus → 弹 OrderDialog
+  wsStore.subscribe('booking_request', handleBookingComing)
+  wsStore.subscribe('booking', handleBookingComing)
+
+  wsStore.subscribe('booking_accepted', (msg) => {
+    const data = msg.data as BookingAcceptPayload | undefined
+    if (data?.vehicleHeight != null) {
+      bookingStore.applyAccept({
+        vehicleHeight: data.vehicleHeight,
+        carHeadLength: data.carHeadLength,
+        xrayEnabled: data.xrayEnabled,
+        linePosition: data.linePosition ?? 0.5,
+      })
+      workflow.value.bookingActive = true
+    }
+  })
+
+  wsStore.subscribe('booking_rejected', () => {
+    bookingStore.applyReject()
+    workflow.value.bookingActive = false
   })
 }
 
@@ -510,10 +558,10 @@ onUnmounted(() => {
       </section>
     </div>
 
-    <!-- 预约弹窗 -->
+    <!-- 预约弹窗 — 对齐 OrderDialog -->
     <BookingDialog
       v-if="showBooking"
-      @close="showBooking = false"
+      @close="bookingStore.closeDialog()"
       @accept="onBookingAccept"
       @reject="onBookingReject"
     />
