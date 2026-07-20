@@ -13,6 +13,7 @@ import BookingDialog from '@/modules/booking/BookingDialog.vue'
 import AgriculturalSelect from '@/components/AgriculturalSelect.vue'
 import LicensePlateEdit from '@/components/LicensePlateEdit.vue'
 import DeviceStatusPanel from '@/components/DeviceStatusPanel.vue'
+import QtMessageBox from '@/components/common/QtMessageBox.vue'
 
 const auth = useAuthStore()
 const wsStore = useWsStore()
@@ -225,13 +226,22 @@ async function onConfirm() {
   }
 }
 
+// ---- 急停（对齐 LvTongPro::onStopClicked / onPLCStopChanged）----
+/** 防止复位弹窗重复弹出 — 对齐 m_openStopFlag */
+const openStopFlag = ref(false)
+const showStopConfirmBox = ref(false)
+const showStopResetBox = ref(false)
+const stopErrorVisible = ref(false)
+const stopErrorMessage = ref('')
+
 // ---- WebSocket 实时数据 ----
 function setupWS() {
   wsStore.connect()
 
   wsStore.subscribe('radar_distance', (msg) => {
-    if (msg.data?.distance != null) {
-      workflow.value.distance = msg.data.distance
+    const data = msg.data as { distance?: number } | undefined
+    if (data?.distance != null) {
+      workflow.value.distance = data.distance
     }
   })
 
@@ -241,6 +251,16 @@ function setupWS() {
 
   wsStore.subscribe('plc_status', (msg) => {
     console.log('[WS] PLC状态:', msg.data)
+    // 对齐 LvTongPro::onPLCStopChanged(bool value)
+    const data = msg.data as Record<string, unknown> | undefined
+    const urgent =
+      data?.urgentstop === true ||
+      data?.urgentStop === true ||
+      data?.stop === true
+    if (urgent && !openStopFlag.value) {
+      openStopFlag.value = true
+      showStopResetBox.value = true
+    }
   })
 
   wsStore.subscribe('detection_step', (msg) => {
@@ -248,14 +268,41 @@ function setupWS() {
   })
 }
 
-// ---- 急停 ----
-async function onStopClick() {
-  if (!confirm('确定执行急停操作？')) return
+function onStopClick() {
+  // 对齐 QMessageBox::question(this, "系统提醒", "确定执行急停操作？", Yes|No)
+  showStopConfirmBox.value = true
+}
+
+async function onStopConfirmYes() {
+  showStopConfirmBox.value = false
   try {
     await request('/booking/urgent-stop', { method: 'POST' })
+    // 对齐 Qt：setPLC urgentstop=true 成功后 m_openStopFlag = false
+    openStopFlag.value = false
   } catch {
-    alert('急停指令发送失败')
+    stopErrorMessage.value = '急停指令发送失败'
+    stopErrorVisible.value = true
   }
+}
+
+function onStopConfirmNo() {
+  showStopConfirmBox.value = false
+}
+
+async function onStopResetYes() {
+  // 对齐 QMessageBox::question(..., "设备急停！ 是否复位？", Yes)
+  showStopResetBox.value = false
+  try {
+    await request('/booking/stop-reset', { method: 'POST' })
+    openStopFlag.value = false
+  } catch {
+    stopErrorMessage.value = '急停复位失败'
+    stopErrorVisible.value = true
+  }
+}
+
+function onStopResetClose() {
+  showStopResetBox.value = false
 }
 
 onMounted(() => {
@@ -471,6 +518,39 @@ onUnmounted(() => {
 
     <!-- 设备状态弹窗 -->
     <DeviceStatusPanel ref="deviceStatusRef" />
+
+    <!-- 急停确认 — 对齐 QMessageBox::question 系统提醒 / 确定执行急停操作？ -->
+    <QtMessageBox
+      v-if="showStopConfirmBox"
+      title="系统提醒"
+      message="确定执行急停操作？"
+      icon="question"
+      :buttons="['yes', 'no']"
+      @yes="onStopConfirmYes"
+      @no="onStopConfirmNo"
+      @close="onStopConfirmNo"
+    />
+
+    <!-- 急停复位 — 对齐 onPLCStopChanged：仅「是」按钮 -->
+    <QtMessageBox
+      v-if="showStopResetBox"
+      title="系统提醒"
+      message="设备急停！ 是否复位？"
+      icon="question"
+      :buttons="['yes']"
+      @yes="onStopResetYes"
+      @close="onStopResetClose"
+    />
+
+    <QtMessageBox
+      v-if="stopErrorVisible"
+      title="系统提醒"
+      :message="stopErrorMessage"
+      icon="warning"
+      :buttons="['yes']"
+      @yes="stopErrorVisible = false"
+      @close="stopErrorVisible = false"
+    />
   </div>
 </template>
 
