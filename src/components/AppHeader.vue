@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { ref } from 'vue'
+import { useRouter } from 'vue-router'
 import { useAuthStore } from '@/stores/useAuthStore'
 
 defineProps<{
@@ -7,10 +8,11 @@ defineProps<{
 }>()
 
 const emit = defineEmits<{
-  toolClick: [tip: string]
+  toolClick: [key: string]
 }>()
 
 const auth = useAuthStore()
+const router = useRouter()
 const userMenuOpen = ref(false)
 
 function toggleUserMenu() {
@@ -24,6 +26,23 @@ function closeUserMenu() {
 function handleLogout() {
   userMenuOpen.value = false
   auth.logout()
+}
+
+function handleToolClick(key: string) {
+  switch (key) {
+    case 'history':
+      router.push('/history')
+      break
+    case 'user':
+      router.push('/users')
+      break
+    case 'device':
+      // 由父组件处理设备状态弹窗
+      emit('toolClick', key)
+      break
+    default:
+      emit('toolClick', key)
+  }
 }
 
 const tools = [
@@ -41,7 +60,7 @@ const tools = [
     <h1 class="title">硚孝高速王母湖收费站绿通快检系统</h1>
 
     <div class="toolbar-frame">
-      <button class="tool-btn stop-btn" title="急停" @click="emit('toolClick', '急停')">
+      <button class="tool-btn stop-btn" title="急停" @click="emit('toolClick', 'stop')">
         <img src="/assets/img/a_stop.png" alt="急停" />
       </button>
 
@@ -50,7 +69,7 @@ const tools = [
         :key="t.key"
         class="tool-btn"
         :title="t.tip"
-        @click="emit('toolClick', t.tip)"
+        @click="handleToolClick(t.key)"
       >
         <img :src="t.icon" :alt="t.tip" />
       </button>
@@ -58,21 +77,8 @@ const tools = [
       <div class="user-area" @click="toggleUserMenu">
         <span class="user-avatar">👤</span>
         <span class="user-name">{{ username ?? '系统管理员' }}</span>
-        <span class="user-arrow" :class="{ open: userMenuOpen }">▼</span>
-
-        <div v-if="userMenuOpen" class="user-dropdown" @click.stop>
-          <div class="dropdown-item user-detail">
-            <span class="detail-label">当前用户</span>
-            <span class="detail-value">{{ username ?? '系统管理员' }}</span>
-          </div>
-          <div class="dropdown-item user-detail" v-if="auth.user">
-            <span class="detail-label">角色</span>
-            <span class="detail-value">{{ auth.user.role === 1 ? '管理员' : '操作员' }}</span>
-          </div>
-          <div class="dropdown-divider" />
-          <button class="dropdown-item logout-btn" @click="handleLogout">
-            <span>退出登录</span>
-          </button>
+        <div v-if="userMenuOpen" class="user-menu">
+          <button @click.stop="handleLogout">退出登录</button>
         </div>
       </div>
     </div>
@@ -80,159 +86,95 @@ const tools = [
 </template>
 
 <style scoped lang="scss">
-@use '@/styles/variables.scss' as *;
-
 .app-header {
-  height: $header-height;
-  min-height: $header-height;
   display: flex;
   align-items: center;
+  height: 72px;
+  padding: 0 16px;
   background: #fff;
-  border-bottom: 2px solid $primary;
-  padding: 0 5px;
-  gap: 0;
+  border-bottom: 1px solid #e0e0e0;
+  flex-shrink: 0;
+  gap: 12px;
 }
 
 .logo {
-  width: 48px;
   height: 48px;
+  width: auto;
   object-fit: contain;
-  flex-shrink: 0;
 }
 
 .title {
-  flex: 1;
-  font-size: 18px;
+  font-size: 20px;
   font-weight: bold;
-  color: $text-gray;
+  color: #1a1a1a;
   white-space: nowrap;
   margin: 0;
-  padding-left: 4px;
+  flex: 1;
 }
 
 .toolbar-frame {
   display: flex;
   align-items: center;
   gap: 8px;
-  min-width: 850px;
-  max-width: 850px;
-  height: 48px;
   flex-shrink: 0;
-  padding-right: 4px;
-}
-
-.stop-btn {
-  margin-left: 80px;
-  margin-right: 40px;
 }
 
 .tool-btn {
-  background: transparent;
+  width: 36px;
+  height: 36px;
+  padding: 2px;
   border: none;
-  padding: 4px;
+  background: transparent;
+  cursor: pointer;
   display: flex;
   align-items: center;
-  cursor: pointer;
-  img {
-    width: 32px;
-    height: 32px;
-  }
-  &:hover {
-    opacity: 0.75;
-  }
+  justify-content: center;
+  border-radius: 4px;
+
+  img { width: 28px; height: 28px; object-fit: contain; }
+  &:hover { background: #f0f0f0; }
 }
+
+.stop-btn img { width: 32px; height: 32px; }
 
 .user-area {
   position: relative;
-  margin-left: auto;
   display: flex;
   align-items: center;
   gap: 6px;
-  padding: 0 12px;
-  height: 48px;
+  padding: 4px 10px;
+  border-radius: 4px;
   cursor: pointer;
-  border-left: 1px dashed #ccc;
-  border-right: 1px dashed #ccc;
-  user-select: none;
+  margin-left: 8px;
 
-  &:hover {
-    background: #f5f5f5;
-  }
+  &:hover { background: #f0f0f0; }
+
+  .user-avatar { font-size: 20px; }
+  .user-name { font-size: 14px; color: #333; white-space: nowrap; }
 }
 
-.user-avatar {
-  font-size: 16px;
-  line-height: 1;
-}
-
-.user-name {
-  font-size: 12px;
-  font-weight: bold;
-  color: #999;
-  white-space: nowrap;
-}
-
-.user-arrow {
-  font-size: 8px;
-  color: #999;
-  transition: transform 0.2s;
-
-  &.open {
-    transform: rotate(180deg);
-  }
-}
-
-.user-dropdown {
+.user-menu {
   position: absolute;
   top: 100%;
   right: 0;
-  min-width: 180px;
+  margin-top: 4px;
   background: #fff;
-  border: 1px solid #e5e7eb;
-  border-radius: 6px;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.12);
-  z-index: 1000;
-  overflow: hidden;
-}
+  border: 1px solid #ddd;
+  border-radius: 4px;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+  z-index: 100;
+  min-width: 100px;
 
-.dropdown-item {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  padding: 10px 14px;
-  font-size: 13px;
-  width: 100%;
-  border: none;
-  background: none;
-  cursor: pointer;
-}
+  button {
+    width: 100%;
+    padding: 8px 16px;
+    border: none;
+    background: transparent;
+    cursor: pointer;
+    font-size: 13px;
+    text-align: left;
 
-.user-detail {
-  cursor: default;
-
-  .detail-label {
-    color: #999;
-    font-size: 12px;
-  }
-
-  .detail-value {
-    color: #333;
-    font-weight: 500;
-  }
-}
-
-.dropdown-divider {
-  height: 1px;
-  background: #e5e7eb;
-  margin: 0;
-}
-
-.logout-btn {
-  color: #ef4444;
-  justify-content: center;
-
-  &:hover {
-    background: #fef2f2;
+    &:hover { background: #f5f5f5; }
   }
 }
 </style>

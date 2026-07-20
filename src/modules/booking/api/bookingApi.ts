@@ -1,6 +1,7 @@
 import type { BookingAcceptPayload, RadarImageResponse } from '../types'
+import { request } from '@/api/request'
 
-/** 预约弹窗后端接口 — 将来替换为真实 HTTP/WebSocket 实现 */
+/** 预约弹窗后端接口 */
 export interface BookingApi {
   /** 拉取雷达来车图 — 对齐 Qt onRefreshClicked → GET headurl */
   fetchRadarImage(): Promise<RadarImageResponse | null>
@@ -16,30 +17,69 @@ export interface BookingApi {
 
 const DEFAULT_HEAD_WIDTH = 1.5
 
-/** 开发阶段 Mock；接入后端时新建 createHttpBookingApi() 替换 */
-export function createMockBookingApi(): BookingApi {
+/** 真实 HTTP 实现 */
+export function createHttpBookingApi(): BookingApi {
   return {
     async fetchRadarImage() {
-      // 无后端时返回 null，UI 显示占位
+      const res = await request<RadarImageResponse>('/booking/radar-image')
+      if (res.code === 0 && res.data) {
+        return res.data
+      }
+      console.warn('[BookingApi] 雷达图像获取失败:', res.message)
       return null
     },
     async onDialogOpen() {
-      // 预留：开闸、LED、视频对讲等
+      // 获取当前预约状态
+      await request('/booking/state')
     },
     async stopVideoSession() {
-      // 预留：停止摄像头与对讲
+      // 停止视频对讲 — 由后端设备中间层处理
+      await request('/booking/stop-video', { method: 'POST' })
     },
     async acceptBooking(payload: BookingAcceptPayload) {
-      console.info('[BookingApi] accept', payload)
+      const res = await request('/booking/accept', {
+        method: 'POST',
+        body: JSON.stringify(payload),
+      })
+      if (res.code !== 0) {
+        throw new Error(res.message || '受理失败')
+      }
     },
     async rejectBooking() {
-      console.info('[BookingApi] reject')
+      const res = await request('/booking/reject', { method: 'POST' })
+      if (res.code !== 0) {
+        throw new Error(res.message || '驳回失败')
+      }
     },
   }
 }
 
-/** 单例，可在 main.ts 或插件中注入真实实现 */
-let bookingApi: BookingApi = createMockBookingApi()
+/** Mock 实现（开发阶段使用） */
+export function createMockBookingApi(): BookingApi {
+  return {
+    async fetchRadarImage() {
+      return null
+    },
+    async onDialogOpen() {},
+    async stopVideoSession() {},
+    async acceptBooking() {
+      console.info('[BookingApi] mock accept')
+    },
+    async rejectBooking() {
+      console.info('[BookingApi] mock reject')
+    },
+  }
+}
+
+let bookingApi: BookingApi
+
+// 根据环境选择实现
+const useMock = import.meta.env.VITE_USE_MOCK === 'true'
+if (useMock) {
+  bookingApi = createMockBookingApi()
+} else {
+  bookingApi = createHttpBookingApi()
+}
 
 export function getBookingApi(): BookingApi {
   return bookingApi
