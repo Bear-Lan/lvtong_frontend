@@ -82,6 +82,17 @@ export const useAuthStore = defineStore('auth', () => {
     localStorage.removeItem('lvtong_user')
   }
 
+  /** 班组切换本地更新 — 对齐 Qt signalUsrChange，不请求后端 */
+  function applyLocalUserSwitch(
+    userInfo: UserInfo,
+    reviewer: { phone: string; name: string },
+  ) {
+    user.value = userInfo
+    reviewerPhone.value = reviewer.phone
+    reviewerName.value = reviewer.name
+    localStorage.setItem('lvtong_user', JSON.stringify(userInfo))
+  }
+
   /** 初始化：恢复登录状态 */
   async function initAuth() {
     const token = localStorage.getItem('lvtong_token')
@@ -109,6 +120,7 @@ export const useAuthStore = defineStore('auth', () => {
     error,
     login,
     logout,
+    applyLocalUserSwitch,
     restoreUser,
     initAuth,
   }

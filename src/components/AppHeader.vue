@@ -1,6 +1,11 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
-import { useAuthStore } from '@/stores/useAuthStore'
+/**
+ * 顶栏 — 对齐 Qt frame + label_user 菜单
+ * 点击用户名 → QMenu：修改密码 / 切换班组
+ */
+import { computed, onMounted, onUnmounted, ref } from 'vue'
+import ChangePasswordDialog from '@/components/ChangePasswordDialog.vue'
+import ChangeUsrDialog from '@/components/ChangeUsrDialog.vue'
 
 export type ToolAnchor = {
   left: number
@@ -21,17 +26,42 @@ const emit = defineEmits<{
   toolClick: [key: string, anchor?: ToolAnchor]
 }>()
 
-const auth = useAuthStore()
 const userMenuOpen = ref(false)
+const showChangePassword = ref(false)
+const showChangeUsr = ref(false)
 
 function toggleUserMenu() {
   userMenuOpen.value = !userMenuOpen.value
 }
 
-function handleLogout() {
+function closeUserMenu() {
   userMenuOpen.value = false
-  auth.logout()
 }
+
+function onChangePassword() {
+  closeUserMenu()
+  showChangePassword.value = true
+}
+
+function onChangeUsr() {
+  closeUserMenu()
+  showChangeUsr.value = true
+}
+
+function onDocClick(e: MouseEvent) {
+  const target = e.target as HTMLElement | null
+  if (!target?.closest('.user-area')) {
+    closeUserMenu()
+  }
+}
+
+onMounted(() => {
+  document.addEventListener('click', onDocClick)
+})
+
+onUnmounted(() => {
+  document.removeEventListener('click', onDocClick)
+})
 
 function rectFromEl(el: EventTarget | null): ToolAnchor | undefined {
   if (!(el instanceof HTMLElement)) return undefined
@@ -47,7 +77,6 @@ function handleToolClick(key: string, e?: MouseEvent) {
     case 'stop':
     case 'plc':
     case 'ai':
-      // 由主界面 Dashboard 处理弹窗（对齐 Qt 弹窗而非跳转页面）
       emit(
         'toolClick',
         key,
@@ -102,15 +131,29 @@ const tools = computed(() => {
         <img :src="t.icon" :alt="t.tip" />
       </button>
 
-      <div class="user-area" @click="toggleUserMenu">
-        <span class="user-avatar">👤</span>
-        <span class="user-name">{{ username ?? '系统管理员' }}</span>
-        <div v-if="userMenuOpen" class="user-menu">
-          <button @click.stop="handleLogout">退出登录</button>
+      <!-- 对齐 Qt label_user：虚线框 + 下拉菜单 -->
+      <div class="user-area" @click.stop="toggleUserMenu">
+        <span class="user-name">{{ username || '系统管理员' }}</span>
+        <div v-if="userMenuOpen" class="user-menu" @click.stop>
+          <button type="button" class="user-menu-item" @click="onChangePassword">
+            修改密码
+          </button>
+          <button type="button" class="user-menu-item" @click="onChangeUsr">
+            切换班组
+          </button>
         </div>
       </div>
     </div>
   </header>
+
+  <ChangePasswordDialog
+    v-if="showChangePassword"
+    @close="showChangePassword = false"
+  />
+  <ChangeUsrDialog
+    v-if="showChangeUsr"
+    @close="showChangeUsr = false"
+  />
 </template>
 
 <style scoped lang="scss">
@@ -120,7 +163,7 @@ const tools = computed(() => {
   height: 72px;
   padding: 0 16px;
   background: #fff;
-  border-bottom: 1px solid #e0e0e0;
+  border-bottom: 2px solid #5fbb9e;
   flex-shrink: 0;
   gap: 12px;
 }
@@ -159,50 +202,74 @@ const tools = computed(() => {
   justify-content: center;
   border-radius: 4px;
 
-  img { width: 28px; height: 28px; object-fit: contain; }
-  &:hover { background: #f0f0f0; }
+  img {
+    width: 28px;
+    height: 28px;
+    object-fit: contain;
+  }
+  &:hover {
+    background: #f0f0f0;
+  }
 }
 
-.stop-btn img { width: 32px; height: 32px; }
+.stop-btn img {
+  width: 32px;
+  height: 32px;
+}
 
+/* 对齐 Qt label_user stylesheet */
 .user-area {
   position: relative;
   display: flex;
   align-items: center;
-  gap: 6px;
-  padding: 4px 10px;
-  border-radius: 4px;
+  justify-content: center;
+  min-height: 48px;
+  padding: 0 12px;
+  margin-left: 4px;
   cursor: pointer;
-  margin-left: 8px;
+  border-left: 1px dashed #cccccc;
+  border-right: 1px dashed #cccccc;
+  user-select: none;
 
-  &:hover { background: #f0f0f0; }
-
-  .user-avatar { font-size: 20px; }
-  .user-name { font-size: 14px; color: #333; white-space: nowrap; }
+  .user-name {
+    font-size: 12px;
+    color: #999;
+    font-weight: bold;
+    white-space: nowrap;
+  }
 }
 
+/* 对齐 Windows/Qt QMenu 外观 */
 .user-menu {
   position: absolute;
   top: 100%;
   right: 0;
-  margin-top: 4px;
-  background: #fff;
-  border: 1px solid #ddd;
-  border-radius: 4px;
-  box-shadow: 0 2px 8px rgba(0,0,0,0.1);
-  z-index: 100;
-  min-width: 100px;
+  margin-top: 0;
+  min-width: 120px;
+  background: #f2f2f2;
+  border: 1px solid #a0a0a0;
+  box-shadow: 2px 2px 6px rgba(0, 0, 0, 0.18);
+  z-index: 200;
+  padding: 2px 0 2px 28px;
+  /* 左侧浅灰条 — 对齐 Qt 菜单图标区 */
+  background-image: linear-gradient(90deg, #e8e8e8 0, #e8e8e8 26px, #f2f2f2 26px);
+}
 
-  button {
-    width: 100%;
-    padding: 8px 16px;
-    border: none;
-    background: transparent;
-    cursor: pointer;
-    font-size: 13px;
-    text-align: left;
+.user-menu-item {
+  display: block;
+  width: 100%;
+  padding: 6px 28px 6px 8px;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  font-size: 13px;
+  color: #222;
+  text-align: left;
+  white-space: nowrap;
 
-    &:hover { background: #f5f5f5; }
+  &:hover {
+    background: #316ac5;
+    color: #fff;
   }
 }
 </style>
