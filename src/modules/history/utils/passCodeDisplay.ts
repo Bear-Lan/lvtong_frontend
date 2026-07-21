@@ -71,6 +71,7 @@ export function isBrowsableImageUrl(path?: string | null): boolean {
     path.startsWith('https://') ||
     path.startsWith('blob:') ||
     path.startsWith('data:') ||
+    path.startsWith('/api/image') ||
     path.startsWith('/')
   )
 }
