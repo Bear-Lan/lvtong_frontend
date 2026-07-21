@@ -41,36 +41,7 @@ const PRODUCT_TYPES = [
   '其他',
 ]
 
-/** 前端兜底排序：与后端一致，防止旧后端/缓存导致混排 */
-const TYPE_RANK: Record<string, number> = {
-  新鲜蔬菜: 1,
-  新鲜水果: 2,
-  鲜活水产品: 3,
-  活的畜禽: 4,
-  '新鲜的肉、蛋、奶': 5,
-  其他: 6,
-}
-
-function codeRank(code: string): number {
-  if (!code) return 9
-  const c = code.trim()
-  if (c.startsWith('1')) return 1
-  if (c.startsWith('2')) return 2
-  if (c.startsWith('3')) return 3
-  if (c.startsWith('4')) return 4
-  if (c.startsWith('5')) return 5
-  if (c.startsWith('L') || c.startsWith('l')) return 6
-  return 9
-}
-
-function sortProducts(list: Product[]): Product[] {
-  // 仅按大类重排；同类内保持后端顺序（对齐 Qt ORDER BY id）
-  return [...list].sort((a, b) => {
-    const ra = Math.min(codeRank(a.product_code), TYPE_RANK[a.product_type] ?? 9)
-    const rb = Math.min(codeRank(b.product_code), TYPE_RANK[b.product_type] ?? 9)
-    return ra - rb
-  })
-}
+// 排序由后端 ORDER BY id 控制，前端不重排（对齐 Qt）
 
 const emit = defineEmits<{
   confirm: [items: AgriculturalSelection[]]
@@ -98,13 +69,15 @@ const statsText = computed(
 
 function parseAliases(raw: Product['aliases']): string[] {
   if (!raw) return []
+  // 后端已解析为数组，直接使用
   if (Array.isArray(raw)) return raw.map(String)
+  // JSON 字符串兜底
   try {
     const parsed = JSON.parse(raw)
-    return Array.isArray(parsed) ? parsed.map(String) : []
-  } catch {
-    return []
-  }
+    if (Array.isArray(parsed)) return parsed.map(String)
+  } catch { /* not JSON */ }
+  // 逗号分隔字符串兜底
+  return raw.split(',').map(s => s.trim()).filter(Boolean)
 }
 
 function imgCandidates(varietyName: string): string[] {
@@ -151,7 +124,7 @@ async function fetchProducts() {
       `/dict/products?${params.toString()}`,
     )
     if (res.code === 0 && res.data) {
-      products.value = sortProducts(res.data.items || [])
+      products.value = res.data.items || []
       total.value = res.data.total || 0
       const pages = Math.max(1, Math.ceil(total.value / pageSize))
       if (page.value > pages) {
