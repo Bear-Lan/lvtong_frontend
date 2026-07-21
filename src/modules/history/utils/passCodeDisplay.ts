@@ -76,23 +76,10 @@ export function isBrowsableImageUrl(path?: string | null): boolean {
   )
 }
 
-/** 将数据库中的图像路径转换为 API 可访问的 URL */
+/** 确保图像路径是浏览器可访问的 URL（后端已转换，前端仅做校验） */
 export function toApiImageUrl(dbPath?: string | null): string {
   if (!dbPath) return ''
   if (isBrowsableImageUrl(dbPath)) return dbPath
-
-  // Windows 绝对路径转换:
-  // D:/LvTongFiles/Images/captures/2026/07/21/head/xxx.jpg
-  // → /api/images/2026/07/21/head/xxx.jpg
-  const markers = ['Images/captures/', 'Images/captures\\',
-                   'Images\\captures\\', 'Images\\captures/']
-  for (const marker of markers) {
-    const idx = dbPath.indexOf(marker)
-    if (idx >= 0) {
-      const relative = dbPath.substring(idx + marker.length).replace(/\\/g, '/')
-      return `/api/images/${relative}`
-    }
-  }
-  // 无法转换，返回空（前端显示占位图）
+  // 后端已经转换过，如果走到这里说明路径格式异常，返回空让前端显示占位图
   return ''
 }

@@ -162,6 +162,11 @@ function imgSrc(path?: string | null, fallback = IMAGE_PLACEHOLDER.default) {
   return fallback
 }
 
+function onImageError(e: Event, fallback = '') {
+  const img = e.target as HTMLImageElement
+  if (img) img.src = fallback || IMAGE_PLACEHOLDER.default
+}
+
 function userLabel(u: UserOption) {
   const phone = u.phone || u.username
   return `${u.real_name || u.username}-${phone}`
@@ -357,7 +362,7 @@ onMounted(async () => {
             <div v-for="p in topPhotos" :key="p.key" class="photo-col">
               <div class="photo-caption">{{ p.label }}</div>
               <div class="photo-img-box">
-                <img :src="imgSrc(p.path, IMAGE_PLACEHOLDER.default)" :alt="p.label" loading="lazy" @error="(e: Event) => (e.target as HTMLImageElement).src = IMAGE_PLACEHOLDER.default" />
+                <img :src="imgSrc(p.path, IMAGE_PLACEHOLDER.default)" :alt="p.label" loading="lazy" @error="onImageError($event)" />
               </div>
             </div>
             <div class="photo-col">
@@ -370,7 +375,7 @@ onMounted(async () => {
                     class="thumb-cell"
                     :class="path ? goodsBorderClass(idx) : ''"
                   >
-                    <img :src="imgSrc(path, IMAGE_PLACEHOLDER.default)" alt="证据照" loading="lazy" @error="(e: Event) => (e.target as HTMLImageElement).src = IMAGE_PLACEHOLDER.default" />
+                    <img :src="imgSrc(path, IMAGE_PLACEHOLDER.default)" alt="证据照" loading="lazy" @error="onImageError($event)" />
                   </div>
                 </div>
               </div>
@@ -383,13 +388,13 @@ onMounted(async () => {
           <div class="mid-cell">
             <div class="section-title">透视图像</div>
             <div class="wide-photo">
-              <img :src="transparentSrc" alt="透视图像" loading="lazy" @error="(e: Event) => (e.target as HTMLImageElement).src = IMAGE_PLACEHOLDER.transparent" />
+              <img :src="transparentSrc" alt="透视图像" loading="lazy" @error="onImageError($event, IMAGE_PLACEHOLDER.transparent)" />
             </div>
           </div>
           <div class="mid-cell">
             <div class="section-title">车身图像</div>
             <div class="wide-photo">
-              <img :src="bodySrc" alt="车身图像" loading="lazy" @error="(e: Event) => (e.target as HTMLImageElement).src = IMAGE_PLACEHOLDER.body" />
+              <img :src="bodySrc" alt="车身图像" loading="lazy" @error="onImageError($event, IMAGE_PLACEHOLDER.body)" />
             </div>
           </div>
           <div class="mid-cell">
@@ -401,7 +406,7 @@ onMounted(async () => {
                 class="thumb-cell"
                 :class="goodsBorderClass(idx)"
               >
-                <img :src="imgSrc(path, IMAGE_PLACEHOLDER.good)" alt="货物照片" loading="lazy" @error="(e: Event) => (e.target as HTMLImageElement).src = IMAGE_PLACEHOLDER.good" />
+                <img :src="imgSrc(path, IMAGE_PLACEHOLDER.good)" alt="货物照片" loading="lazy" @error="onImageError($event, IMAGE_PLACEHOLDER.good)" />
               </div>
             </div>
           </div>
