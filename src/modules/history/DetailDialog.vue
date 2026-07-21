@@ -33,6 +33,7 @@ import {
   isBrowsableImageUrl,
   parseVehicleSizeToMm,
   splitImagePaths,
+  toApiImageUrl,
 } from './utils/passCodeDisplay'
 
 const props = defineProps<{
@@ -138,25 +139,26 @@ const goodsGridStyle = computed(() => {
 })
 
 const transparentSrc = computed(() => {
-  const raw = record.value?.transparent_image_path
-  if (isBrowsableImageUrl(raw)) return raw!
+  const url = toApiImageUrl(record.value?.transparent_image_path)
+  if (isBrowsableImageUrl(url)) return url!
   return IMAGE_PLACEHOLDER.transparent
 })
 
 const bodySrc = computed(() => {
-  const raw = record.value?.body_image_path
-  if (isBrowsableImageUrl(raw)) return raw!
+  const url = toApiImageUrl(record.value?.body_image_path)
+  if (isBrowsableImageUrl(url)) return url!
   return IMAGE_PLACEHOLDER.body
 })
 
 const passCodeSrc = computed(() => {
-  const raw = record.value?.pass_code_image_path
-  if (isBrowsableImageUrl(raw)) return raw!
+  const url = toApiImageUrl(record.value?.pass_code_image_path)
+  if (isBrowsableImageUrl(url)) return url!
   return ''
 })
 
 function imgSrc(path?: string | null, fallback = IMAGE_PLACEHOLDER.default) {
-  if (isBrowsableImageUrl(path)) return path!
+  const url = toApiImageUrl(path)
+  if (isBrowsableImageUrl(url)) return url!
   return fallback
 }
 
@@ -355,7 +357,7 @@ onMounted(async () => {
             <div v-for="p in topPhotos" :key="p.key" class="photo-col">
               <div class="photo-caption">{{ p.label }}</div>
               <div class="photo-img-box">
-                <img :src="imgSrc(p.path, IMAGE_PLACEHOLDER.default)" :alt="p.label" />
+                <img :src="imgSrc(p.path, IMAGE_PLACEHOLDER.default)" :alt="p.label" loading="lazy" @error="(e: Event) => (e.target as HTMLImageElement).src = IMAGE_PLACEHOLDER.default" />
               </div>
             </div>
             <div class="photo-col">
@@ -368,7 +370,7 @@ onMounted(async () => {
                     class="thumb-cell"
                     :class="path ? goodsBorderClass(idx) : ''"
                   >
-                    <img :src="imgSrc(path, IMAGE_PLACEHOLDER.default)" alt="证据照" />
+                    <img :src="imgSrc(path, IMAGE_PLACEHOLDER.default)" alt="证据照" loading="lazy" @error="(e: Event) => (e.target as HTMLImageElement).src = IMAGE_PLACEHOLDER.default" />
                   </div>
                 </div>
               </div>
@@ -381,13 +383,13 @@ onMounted(async () => {
           <div class="mid-cell">
             <div class="section-title">透视图像</div>
             <div class="wide-photo">
-              <img :src="transparentSrc" alt="透视图像" />
+              <img :src="transparentSrc" alt="透视图像" loading="lazy" @error="(e: Event) => (e.target as HTMLImageElement).src = IMAGE_PLACEHOLDER.transparent" />
             </div>
           </div>
           <div class="mid-cell">
             <div class="section-title">车身图像</div>
             <div class="wide-photo">
-              <img :src="bodySrc" alt="车身图像" />
+              <img :src="bodySrc" alt="车身图像" loading="lazy" @error="(e: Event) => (e.target as HTMLImageElement).src = IMAGE_PLACEHOLDER.body" />
             </div>
           </div>
           <div class="mid-cell">
@@ -399,7 +401,7 @@ onMounted(async () => {
                 class="thumb-cell"
                 :class="goodsBorderClass(idx)"
               >
-                <img :src="imgSrc(path, IMAGE_PLACEHOLDER.good)" alt="货物照片" />
+                <img :src="imgSrc(path, IMAGE_PLACEHOLDER.good)" alt="货物照片" loading="lazy" @error="(e: Event) => (e.target as HTMLImageElement).src = IMAGE_PLACEHOLDER.good" />
               </div>
             </div>
           </div>
