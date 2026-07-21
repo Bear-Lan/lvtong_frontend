@@ -30,11 +30,14 @@ const router = useRouter()
 const showHistory = ref(false)
 const showPlcControl = ref(false)
 const showAiStatus = ref(false)
-/** 对齐 Qt：弹窗贴在开关控制 / AI 按钮左下角 */
+const showDeviceStatus = ref(false)
+/** 对齐 Qt：弹窗贴在对应按钮下方 */
 const plcAnchor = ref<{ left: number; top: number } | null>(null)
 const aiAnchor = ref<{ left: number; top: number } | null>(null)
-/** 对齐 btn_webservice 在线图标 */
+const deviceAnchor = ref<{ left: number; top: number } | null>(null)
+/** 对齐 btn_webservice / btn_setting 在线图标 */
 const aiOnline = ref(false)
+const devicesOnline = ref(false)
 const workflow = ref({
   bookingActive: false,
   distance: 0,
@@ -164,9 +167,6 @@ async function checkHistoryCount(plate: string) {
     // ignore
   }
 }
-
-// ---- 设备状态面板 ----
-const deviceStatusRef = ref<InstanceType<typeof DeviceStatusPanel> | null>(null)
 
 // ---- 图像采集 ----
 const captureButtons = [
@@ -335,33 +335,32 @@ function onStopClick() {
   showStopConfirmBox.value = true
 }
 
-/** 顶栏工具 — 对齐 LvTongPro::onHistoryClicked / onPlcControl / onWebServiceClicked / 设备状态 */
+/** 顶栏工具 — 对齐 onHistoryClicked / onPlcControl / onWebServiceClicked / onSettingClicked */
 function onHeaderToolClick(key: string, anchor?: ToolAnchor) {
   if (key === 'history') {
     showHistory.value = true
     return
   }
   if (key === 'plc') {
-    // 对齐 onPlcControl：贴按钮下方显示；再点同一按钮则关闭
     if (showPlcControl.value) {
       showPlcControl.value = false
       return
     }
     showAiStatus.value = false
+    showDeviceStatus.value = false
     if (anchor) {
-      // Qt: mapToGlobal(QPoint(0, height)) → 左对齐、贴按钮底边
       plcAnchor.value = { left: anchor.left, top: anchor.bottom }
     }
     showPlcControl.value = true
     return
   }
   if (key === 'ai') {
-    // 对齐 onWebServiceClicked → WebServiceDialog
     if (showAiStatus.value) {
       showAiStatus.value = false
       return
     }
     showPlcControl.value = false
+    showDeviceStatus.value = false
     if (anchor) {
       aiAnchor.value = { left: anchor.left, top: anchor.bottom }
     }
@@ -369,7 +368,17 @@ function onHeaderToolClick(key: string, anchor?: ToolAnchor) {
     return
   }
   if (key === 'device') {
-    deviceStatusRef.value?.show()
+    // 对齐 onSettingClicked：再点关闭；位置 mapToGlobal(-50, height)
+    if (showDeviceStatus.value) {
+      showDeviceStatus.value = false
+      return
+    }
+    showPlcControl.value = false
+    showAiStatus.value = false
+    if (anchor) {
+      deviceAnchor.value = { left: anchor.left - 50, top: anchor.bottom }
+    }
+    showDeviceStatus.value = true
     return
   }
   if (key === 'stop') {
@@ -379,6 +388,10 @@ function onHeaderToolClick(key: string, anchor?: ToolAnchor) {
 
 function onAiStatusChange(online: boolean) {
   aiOnline.value = online
+}
+
+function onDevicesStatusChange(allOnline: boolean) {
+  devicesOnline.value = allOnline
 }
 
 async function onStopConfirmYes() {
@@ -428,6 +441,7 @@ onUnmounted(() => {
     <AppHeader
       :username="auth.user?.realName"
       :ai-online="aiOnline"
+      :devices-online="devicesOnline"
       @tool-click="onHeaderToolClick"
     />
 
@@ -622,8 +636,13 @@ onUnmounted(() => {
       @confirm="onPlateGCConfirm"
     />
 
-    <!-- 设备状态弹窗 -->
-    <DeviceStatusPanel ref="deviceStatusRef" />
+    <!-- 设备连接状态 — 对齐 onSettingClicked DeviceStatusPopup -->
+    <DeviceStatusPanel
+      v-if="showDeviceStatus"
+      :anchor="deviceAnchor"
+      @close="showDeviceStatus = false"
+      @status-change="onDevicesStatusChange"
+    />
 
     <!-- 开关控制 / PLC设备状态控制 — 对齐 PLCControlDialog -->
     <PlcControlDialog

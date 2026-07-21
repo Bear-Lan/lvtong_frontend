@@ -14,6 +14,8 @@ const props = defineProps<{
   username?: string
   /** 对齐 Qt btn_webservice 在线图标 */
   aiOnline?: boolean
+  /** 对齐 Qt btn_setting：全部设备在线用 s_connect */
+  devicesOnline?: boolean
 }>()
 
 const emit = defineEmits<{
@@ -49,11 +51,12 @@ function handleToolClick(key: string, e?: MouseEvent) {
     case 'stop':
     case 'plc':
     case 'ai':
-      // 由主界面 Dashboard 处理弹窗（对齐 Qt 弹窗而非跳转页面）
       emit(
         'toolClick',
         key,
-        key === 'plc' || key === 'ai' ? rectFromEl(e?.currentTarget ?? null) : undefined,
+        key === 'plc' || key === 'ai' || key === 'device'
+          ? rectFromEl(e?.currentTarget ?? null)
+          : undefined,
       )
       break
     default:
@@ -62,8 +65,8 @@ function handleToolClick(key: string, e?: MouseEvent) {
 }
 
 const tools = computed(() => {
-  // tip/icon 对齐 onAiModelOnlineStateChanged
   const aiOnline = props.aiOnline === true
+  const devicesOnline = props.devicesOnline === true
   return [
     { key: 'history', icon: '/assets/img/s_record.png', tip: '历史记录' },
     { key: 'plc', icon: '/assets/img/s_turn.png', tip: '开关控制' },
@@ -72,7 +75,11 @@ const tools = computed(() => {
       icon: aiOnline ? '/assets/img/ai_model_online.png' : '/assets/img/ai_model_offline.png',
       tip: aiOnline ? 'AI智能体连接状态：在线' : 'AI智能体连接状态：离线',
     },
-    { key: 'device', icon: '/assets/img/s_disconnect.png', tip: '设备连接状态' },
+    {
+      key: 'device',
+      icon: devicesOnline ? '/assets/img/s_connect.png' : '/assets/img/s_disconnect.png',
+      tip: devicesOnline ? '设备连接状态：在线' : '设备连接状态：离线',
+    },
     { key: 'user', icon: '/assets/img/usrmgr.png', tip: '用户管理' },
   ]
 })
