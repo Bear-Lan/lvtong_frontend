@@ -15,11 +15,6 @@ const router = createRouter({
       component: () => import('@/views/Dashboard.vue'),
     },
     {
-      path: '/history',
-      name: 'history',
-      component: () => import('@/views/History.vue'),
-    },
-    {
       path: '/detail/:id',
       name: 'detail',
       component: () => import('@/views/Detail.vue'),
