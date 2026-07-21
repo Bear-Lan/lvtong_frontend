@@ -26,6 +26,7 @@ function closeUserMenu() {
 function handleLogout() {
   userMenuOpen.value = false
   auth.logout()
+  router.push('/login')
 }
 
 function handleToolClick(key: string) {
@@ -38,7 +39,6 @@ function handleToolClick(key: string) {
     case 'stop':
     case 'plc':
     case 'ai':
-      // 由主界面 Dashboard 处理弹窗（对齐 Qt 弹窗而非跳转页面）
       emit('toolClick', key)
       break
     default:
