@@ -1,11 +1,14 @@
 <script setup lang="ts">
+/**
+ * 雷达来车图 + 可拖分界红线 — 对齐 Qt ImageLabelWithLine
+ * 面板透明无边框，对话框绿渐变透过
+ */
 import { computed, ref, watch } from 'vue'
 
 const props = defineProps<{
   imageUrl?: string | null
   linePosition: number
   darkness?: number
-  /** 无图时也显示红线 — 对齐 ImageLabelWithLine 默认可交互 */
   alwaysShowLine?: boolean
 }>()
 
@@ -18,14 +21,14 @@ const panelRef = ref<HTMLElement | null>(null)
 
 const linePercent = computed(() => `${props.linePosition * 100}%`)
 const showLine = computed(() => props.alwaysShowLine || !!props.imageUrl)
+const maskOpacity = computed(() => (props.darkness ?? 0) / 255)
 
 function clampPosition(clientX: number) {
   const el = panelRef.value
   if (!el) return props.linePosition
   const rect = el.getBoundingClientRect()
   if (rect.width <= 0) return props.linePosition
-  const x = clientX - rect.left
-  return Math.min(1, Math.max(0, x / rect.width))
+  return Math.min(1, Math.max(0, (clientX - rect.left) / rect.width))
 }
 
 function onPointerDown(e: PointerEvent) {
@@ -74,8 +77,9 @@ watch(
 
     <template v-if="showLine">
       <div
+        v-if="maskOpacity > 0"
         class="radar-mask"
-        :style="{ width: linePercent, opacity: (darkness ?? 0) / 255 }"
+        :style="{ width: linePercent, opacity: maskOpacity }"
       />
       <div class="radar-line" :style="{ left: linePercent }" />
     </template>
@@ -89,7 +93,9 @@ watch(
   height: 256px;
   flex-shrink: 0;
   background: transparent;
-  border: 2px solid #ddd;
+  border: none;
+  outline: none;
+  box-shadow: none;
   overflow: hidden;
   cursor: default;
   user-select: none;
@@ -119,6 +125,7 @@ watch(
   justify-content: center;
   color: #666;
   font-size: 16px;
+  pointer-events: none;
 }
 
 .radar-mask {
@@ -130,13 +137,15 @@ watch(
   pointer-events: none;
 }
 
+/* 对齐 ImageLabelWithLine：2px 红线 + 半径 5 白边圆点 */
 .radar-line {
   position: absolute;
   top: 0;
   bottom: 0;
   width: 2px;
   margin-left: -1px;
-  background: #f00;
+  background: #ff0000;
+  z-index: 2;
   pointer-events: none;
 
   &::after {
@@ -148,8 +157,9 @@ watch(
     height: 10px;
     margin: -5px 0 0 -5px;
     border-radius: 50%;
-    background: #f00;
-    border: 1px solid #fff;
+    background: #ff0000;
+    border: 1px solid #ffffff;
+    box-sizing: border-box;
   }
 }
 </style>

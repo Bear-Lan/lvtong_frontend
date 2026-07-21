@@ -15,7 +15,6 @@ import LicensePlateEdit from '@/components/LicensePlateEdit.vue'
 import DeviceStatusPanel from '@/components/DeviceStatusPanel.vue'
 import QtMessageBox from '@/components/common/QtMessageBox.vue'
 import HistoryDialog from '@/modules/history/HistoryDialog.vue'
-import type { HistoryRecord } from '@/modules/history'
 import { useBookingStore } from '@/modules/booking'
 import type { BookingAcceptPayload, BookingComingPayload } from '@/modules/booking'
 import { useRouter } from 'vue-router'
@@ -341,13 +340,6 @@ function onHeaderToolClick(key: string) {
   }
 }
 
-/** 查看详情 — 对齐 HistoryDialog 打开 DetailDialog */
-function onHistoryDetail(record: HistoryRecord) {
-  if (!record?.id) return
-  showHistory.value = false
-  router.push(`/detail/${record.id}`)
-}
-
 async function onStopConfirmYes() {
   showStopConfirmBox.value = false
   try {
@@ -570,7 +562,6 @@ onUnmounted(() => {
     <AgriculturalSelect
       ref="agriculturalSelectRef"
       @confirm="onAgriculturalConfirm"
-      @close="() => {}"
     />
 
     <!-- 车牌编辑弹窗 -->
@@ -580,7 +571,6 @@ onUnmounted(() => {
       :current-color="form.plateColor"
       title="车牌修改"
       @confirm="onPlateConfirm"
-      @close="() => {}"
     />
     <LicensePlateEdit
       ref="licensePlateGCRef"
@@ -588,7 +578,6 @@ onUnmounted(() => {
       :current-color="form.plateGcColor"
       title="挂车车牌修改"
       @confirm="onPlateGCConfirm"
-      @close="() => {}"
     />
 
     <!-- 设备状态弹窗 -->
@@ -598,7 +587,6 @@ onUnmounted(() => {
     <HistoryDialog
       v-if="showHistory"
       @close="showHistory = false"
-      @detail="onHistoryDetail"
     />
 
     <!-- 急停确认 — 对齐 QMessageBox::question 系统提醒 / 确定执行急停操作？ -->

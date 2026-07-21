@@ -5,13 +5,15 @@
  */
 import { computed, onMounted, ref } from 'vue'
 import { exportHistoryCsv, fetchHistoryList, fetchOperators } from './api'
+import DetailDialog from './DetailDialog.vue'
 import type { HistoryRecord, HistorySearchCriteria } from './types'
 import QtMessageBox from '@/components/common/QtMessageBox.vue'
 
 const emit = defineEmits<{
   close: []
-  detail: [record: HistoryRecord]
 }>()
+
+const detailId = ref<number | null>(null)
 
 const loading = ref(false)
 const items = ref<HistoryRecord[]>([])
@@ -194,7 +196,15 @@ function onShowDetail() {
     tipVisible.value = true
     return
   }
-  emit('detail', items.value[selectedIndex.value])
+  detailId.value = items.value[selectedIndex.value].id
+}
+
+function onDetailClose() {
+  detailId.value = null
+}
+
+function onDetailModified() {
+  loadData()
 }
 
 async function onExport() {
@@ -374,6 +384,14 @@ onMounted(async () => {
       :buttons="['yes']"
       @yes="tipVisible = false"
       @close="tipVisible = false"
+    />
+
+    <!-- 查验记录详情 — 对齐 DetailDialog -->
+    <DetailDialog
+      v-if="detailId != null"
+      :inspection-id="detailId"
+      @close="onDetailClose"
+      @modified="onDetailModified"
     />
   </div>
 </template>

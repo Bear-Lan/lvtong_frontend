@@ -25,7 +25,7 @@ export function useBookingDialog() {
   const loading = ref(false)
   const submitting = ref(false)
   const radarImageUrl = ref<string | null>(null)
-  const linePosition = ref(0.5)
+  const linePosition = ref(0.5) // 对齐 ImageLabelWithLine 默认中间
   const imageEnvelope = ref('')
   const vehicleHeaderEnvelope = ref('')
   const originalImageWidth = ref(0)
@@ -59,7 +59,7 @@ export function useBookingDialog() {
   /** 对齐 label_imginfo：有数值即显示（不依赖是否有图） */
   const imgInfoText = computed(
     () =>
-      `车头长度:${carHeadLength.value.toFixed(2)}米，高度: ${vehicleHeight.value.toFixed(2)}米`,
+      `车头长度: ${carHeadLength.value.toFixed(2)}米，高度: ${vehicleHeight.value.toFixed(2)}米`,
   )
 
   const videoStreamUrl = computed(() => bookingStore.videoStreamUrl)

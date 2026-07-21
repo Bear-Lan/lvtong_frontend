@@ -1,5 +1,13 @@
 import { request } from '@/api/request'
-import type { HistoryListResult, HistorySearchCriteria } from './types'
+import type {
+  DetailModifyPayload,
+  DictOption,
+  HistoryListResult,
+  HistorySearchCriteria,
+  InspectionDetail,
+  NoPassOption,
+  UserOption,
+} from './types'
 
 function buildParams(
   criteria: HistorySearchCriteria,
@@ -45,6 +53,57 @@ export async function fetchOperators(): Promise<string[]> {
       .map((u) => (u as { real_name?: string }).real_name || (u as { username?: string }).username || '')
       .filter(Boolean)
     return [...new Set(names)]
+  } catch {
+    return []
+  }
+}
+
+/** GET /api/inspection/:id — 对齐 DetailDialog::setVehicleInfo */
+export async function fetchInspectionDetail(id: number) {
+  return request<InspectionDetail>(`/inspection/${id}`)
+}
+
+/** PUT /api/inspection/:id — 对齐 DetailDialog::onModifyDetail */
+export async function updateInspectionDetail(id: number, payload: DetailModifyPayload) {
+  return request<null>(`/inspection/${id}`, {
+    method: 'PUT',
+    body: JSON.stringify(payload),
+  })
+}
+
+export async function fetchTruckTypes(): Promise<DictOption[]> {
+  const res = await request<DictOption[]>('/dict/truck-types')
+  return res.code === 0 && res.data ? res.data : []
+}
+
+export async function fetchContainerTypes(): Promise<DictOption[]> {
+  const res = await request<DictOption[]>('/dict/container-types')
+  return res.code === 0 && res.data ? res.data : []
+}
+
+export async function fetchNoPassTypes(): Promise<NoPassOption[]> {
+  const res = await request<NoPassOption[]>('/dict/no-pass-types')
+  return res.code === 0 && res.data ? res.data : []
+}
+
+export async function fetchStationName(stationId?: string): Promise<string> {
+  if (!stationId) return ''
+  try {
+    const res = await request<{ station_name?: string }>(`/dict/stations/${encodeURIComponent(stationId)}`)
+    if (res.code === 0 && res.data?.station_name) return res.data.station_name
+  } catch {
+    // 404 或未配置时回退 ID
+  }
+  return stationId
+}
+
+/** 查验/复核人员 — 对齐 getUsersByRole(1) */
+export async function fetchInspectorUsers(): Promise<UserOption[]> {
+  try {
+    const res = await request<UserOption[] | Record<string, unknown>>('/user/query?username=all')
+    if (res.code !== 0 || !res.data) return []
+    const list = Array.isArray(res.data) ? res.data : []
+    return list.map((u) => u as UserOption)
   } catch {
     return []
   }
