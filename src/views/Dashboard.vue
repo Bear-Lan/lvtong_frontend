@@ -13,6 +13,7 @@ import type { WorkflowStepKey } from '@/components/WorkflowIcons.vue'
 import BookingDialog from '@/modules/booking/BookingDialog.vue'
 import AgriculturalSelect from '@/components/AgriculturalSelect.vue'
 import LicensePlateEdit from '@/components/LicensePlateEdit.vue'
+import CarSizeDialog from '@/components/CarSizeDialog.vue'
 import DeviceStatusPanel from '@/components/DeviceStatusPanel.vue'
 import PlcControlDialog from '@/components/PlcControlDialog.vue'
 import AiStatusDialog from '@/components/AiStatusDialog.vue'
@@ -133,6 +134,15 @@ function onAgriculturalConfirm(items: { productCode: string; varietyName: string
 // ---- 车牌编辑 ----
 const licensePlateRef = ref<InstanceType<typeof LicensePlateEdit> | null>(null)
 const licensePlateGCRef = ref<InstanceType<typeof LicensePlateEdit> | null>(null)
+const showCarSize = ref(false)
+
+function onEditCarSize() {
+  showCarSize.value = true
+}
+
+function onCarSizeConfirm(sizeText: string) {
+  form.value.size = sizeText
+}
 
 function onEditPlate() {
   licensePlateRef.value?.show()
@@ -596,7 +606,7 @@ onUnmounted(() => {
               <span class="col-gap" />
               <label class="col-right">轮廓尺寸：</label>
               <input v-model="form.size" class="field-input" placeholder="请输入外轮廓长宽高" readonly />
-              <button class="icon-btn" title="轮廓尺寸编辑">
+              <button class="icon-btn" title="轮廓尺寸编辑" @click="onEditCarSize">
                 <img src="/assets/img/a_search.png" alt="" />
               </button>
             </div>
@@ -646,6 +656,14 @@ onUnmounted(() => {
       :current-color="form.plateGcColor"
       title="挂车车牌修改"
       @confirm="onPlateGCConfirm"
+    />
+
+    <!-- 货车轮廓尺寸修改 — 对齐 CarSizeDialog -->
+    <CarSizeDialog
+      v-if="showCarSize"
+      :model-value="form.size"
+      @confirm="onCarSizeConfirm"
+      @close="showCarSize = false"
     />
 
     <!-- 设备连接状态 — 对齐 onSettingClicked DeviceStatusPopup -->
