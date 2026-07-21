@@ -1,129 +1,224 @@
 <script setup lang="ts">
 /**
- * PLC 开关控制对话框 — 对齐 Qt 开关控制面板
+ * PLC 设备状态控制 — 对齐 Qt PLCControlDialog (160×290)
+ * 开关图：plcctrl_open.png / plcctrl_close.png
+ * 确认：QMessageBox「系统提醒」Yes/No
+ * 标题栏图标：logo.ico，点击弹出系统菜单
  */
-import { onMounted, onUnmounted, ref } from 'vue'
-import { request } from '@/api/request'
+import { onMounted, onUnmounted, ref, computed } from 'vue'
 import { useWsStore } from '@/stores/useWsStore'
 import QtMessageBox from '@/components/common/QtMessageBox.vue'
+
+const props = defineProps<{
+  /** 对齐 Qt：btn_plccontrol 左下角全局坐标 */
+  anchor?: { left: number; top: number } | null
+}>()
 
 const emit = defineEmits<{ close: [] }>()
 
 const wsStore = useWsStore()
-const loading = ref(false)
-const tipVisible = ref(false)
-const tipMessage = ref('')
+
+/** 确认框 */
+const confirmVisible = ref(false)
+const confirmMessage = ref('')
+let pending: { key: string; next: boolean } | null = null
+
+/** 标题栏系统菜单（对齐 Windows 点窗口图标） */
+const sysMenuOpen = ref(false)
 
 interface SwitchItem {
+  /** 下发参数名 — 对齐 Qt setPLC params */
   key: string
   label: string
+  /** 本地状态字段 */
   field: string
+  /** 确认文案：next=true / next=false */
+  tipOn: string
+  tipOff: string
 }
 
+/** 顺序对齐 PLCControlDialog.ui grid row 0/1/2/3/5/6/7/8/9/10/11/12 */
 const switches: SwitchItem[] = [
-  { key: 'redlight', label: '红灯', field: 'red' },
-  { key: 'yellowlight', label: '黄灯', field: 'yellow' },
-  { key: 'greenlight', label: '绿灯', field: 'green' },
-  { key: 'greatlight', label: '强光灯', field: 'greatlight' },
-  { key: 'lightgate200', label: '200kV 光栅', field: 'lightgate200' },
-  { key: 'lightgate160', label: '160kV 光栅', field: 'lightgate160' },
+  { key: 'urgentstop', field: 'urgentstop', label: '急停', tipOn: '设备急停 ?', tipOff: '设备打开 ?' },
+  { key: 'redlight', field: 'redlight', label: '红灯', tipOn: '红灯打开 ?', tipOff: '红灯关闭 ?' },
+  { key: 'yellowlight', field: 'yellowlight', label: '黄灯', tipOn: '黄灯打开 ?', tipOff: '黄灯关闭 ?' },
+  { key: 'greenlight', field: 'greenlight', label: '绿灯', tipOn: '绿灯打开 ?', tipOff: '绿灯关闭 ?' },
+  { key: 'createlight', field: 'createlight', label: '补光灯', tipOn: '补光灯打开 ?', tipOff: '补光灯关闭 ?' },
+  { key: 'xraygate160', field: 'xraygate160', label: '160光闸', tipOn: '160光闸打开 ?', tipOff: '160光闸关闭 ?' },
+  { key: 'interlock160', field: 'interlock160', label: '160InterLock', tipOn: '160InterLock打开 ?', tipOff: '160InterLock关闭 ?' },
+  { key: 'xraygate200', field: 'xraygate200', label: '200光闸', tipOn: '200光闸打开 ?', tipOff: '200光闸关闭 ?' },
+  // Qt 原文确认语为「2000InterLock…」
+  { key: 'interlock200', field: 'interlock200', label: '200InterLock', tipOn: '2000InterLock打开 ?', tipOff: '2000InterLock关闭 ?' },
+  { key: 'xraymotorreset200', field: 'xraymotorreset200', label: '200伺服复位', tipOn: '200伺服打开 ?', tipOff: '200伺服关闭 ?' },
+  { key: 'xraymotorreset160', field: 'xraymotorreset160', label: '160伺服复位', tipOn: '160伺服复位 ?', tipOff: '160伺服关闭 ?' },
+  { key: 'soundalarm', field: 'soundalarm', label: '声音报警', tipOn: '声音报警打开 ?', tipOff: '声音报警关闭 ?' },
 ]
 
 const states = ref<Record<string, boolean>>({
-  red: false, yellow: false, green: false, greatlight: false,
-  lightgate200: false, lightgate160: false, urgentstop: false,
+  urgentstop: false,
+  redlight: false,
+  yellowlight: false,
+  greenlight: false,
+  createlight: false,
+  xraygate160: false,
+  interlock160: false,
+  xraygate200: false,
+  interlock200: false,
+  xraymotorreset200: false,
+  xraymotorreset160: false,
+  soundalarm: false,
 })
 
+function applyStatus(d: Record<string, unknown>) {
+  // 对齐 PLCControlDialog::onPLCStatusUpdated
+  states.value.redlight = !!(d.redLightCmd ?? d.redlight ?? d.red)
+  states.value.yellowlight = !!(d.yellowLightCmd ?? d.yellowlight ?? d.yellow)
+  states.value.greenlight = !!(d.greenLightCmd ?? d.greenlight ?? d.green)
+  states.value.createlight = !!(d.createLightCmd ?? d.createlight ?? d.greatlight)
+  states.value.soundalarm = !!(d.soundalarmCmd ?? d.soundalarm)
+  states.value.interlock160 = !!(d.interlock160Cmd ?? d.interlock160)
+  states.value.interlock200 = !!(d.interlock200Cmd ?? d.interlock200)
+  states.value.urgentstop = !!(d.urgentStopStatus ?? d.urgentstop)
+  states.value.xraygate200 = !!(d.lightGate200Status ?? d.xraygate200)
+  states.value.xraygate160 = !!(d.lightGate160Status ?? d.xraygate160)
+  states.value.xraymotorreset200 = !!(d.xraymotorreset200)
+  states.value.xraymotorreset160 = !!(d.xraymotorreset160)
+}
+
 function onWsPlcStatus(msg: { data?: Record<string, unknown> }) {
-  const d = msg.data
-  if (!d) return
-  states.value.red = (d.redLightCmd ?? d.red ?? false) as boolean
-  states.value.yellow = (d.yellowLightCmd ?? d.yellow ?? false) as boolean
-  states.value.green = (d.greenLightCmd ?? d.green ?? false) as boolean
-  states.value.greatlight = (d.createLightCmd ?? d.greatlight ?? d.greatLight ?? false) as boolean
-  states.value.lightgate200 = (d.lightGate200Status ?? false) as boolean
-  states.value.lightgate160 = (d.lightGate160Status ?? false) as boolean
-  states.value.urgentstop = (d.urgentStopStatus ?? d.urgentstop ?? false) as boolean
+  if (msg.data) applyStatus(msg.data)
+}
+
+function onSysMenuDocClick() {
+  sysMenuOpen.value = false
 }
 
 onMounted(() => {
   wsStore.subscribe('plc_status', onWsPlcStatus)
+  document.addEventListener('click', onSysMenuDocClick)
 })
 
 onUnmounted(() => {
-  // cleanup handled by wsStore
+  document.removeEventListener('click', onSysMenuDocClick)
 })
 
-async function toggleSwitch(item: SwitchItem) {
-  loading.value = true
-  // 构建 PLC 控制参数（翻转当前状态）
-  const params: Record<string, boolean> = {}
-  switches.forEach(s => { params[s.key] = states.value[s.field] })
-  params[item.key] = !states.value[item.field]
-
-  try {
-    const res = await request('/device/plc-control', {
-      method: 'POST',
-      body: JSON.stringify(params),
-    })
-    if (res.code === 0) {
-      states.value[item.field] = !states.value[item.field]
-    } else {
-      tipMessage.value = res.message || '控制失败'
-      tipVisible.value = true
-    }
-  } catch (e) {
-    tipMessage.value = '控制失败: ' + (e instanceof Error ? e.message : '未知错误')
-    tipVisible.value = true
-  } finally {
-    loading.value = false
-  }
+/** 点击开关：先弹确认，对齐 onBtnClicked */
+function onSwitchClick(item: SwitchItem) {
+  if (confirmVisible.value) return
+  const next = !states.value[item.field]
+  pending = { key: item.key, next }
+  confirmMessage.value = next ? item.tipOn : item.tipOff
+  confirmVisible.value = true
 }
+
+/** 当前仅 UI 对齐：确认后只切换本地图标，不下发后端 */
+function onConfirmYes() {
+  confirmVisible.value = false
+  if (!pending) return
+  const { key, next } = pending
+  pending = null
+  states.value[key] = next
+}
+
+function onConfirmNo() {
+  confirmVisible.value = false
+  pending = null
+}
+
+function toggleSysMenu(e: MouseEvent) {
+  e.stopPropagation()
+  sysMenuOpen.value = !sysMenuOpen.value
+}
+
+function onSysClose() {
+  sysMenuOpen.value = false
+  emit('close')
+}
+
+/** 对齐 LvTongPro::onPlcControl：move(btn.mapToGlobal(0, height)) */
+const dialogStyle = computed(() => {
+  const left = props.anchor?.left ?? 0
+  const top = props.anchor?.top ?? 72
+  const w = 160
+  const h = 290
+  // 避免贴边溢出视口
+  const maxLeft = Math.max(0, window.innerWidth - w - 4)
+  const maxTop = Math.max(0, window.innerHeight - h - 4)
+  return {
+    left: `${Math.min(Math.max(0, left), maxLeft)}px`,
+    top: `${Math.min(Math.max(0, top), maxTop)}px`,
+  }
+})
 </script>
 
 <template>
   <div class="plc-overlay" @click.self="emit('close')">
-    <div class="plc-dialog" role="dialog" aria-modal="true" @click.stop>
+    <div
+      class="plc-dialog"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="plc-dlg-title"
+      :style="dialogStyle"
+      @click.stop
+    >      <!-- 标题栏 — 对齐 Windows QDialog + logo.ico -->
       <div class="dialog-titlebar">
-        <span class="dialog-title">开关控制</span>
+        <button
+          type="button"
+          class="title-icon-btn"
+          title="系统菜单"
+          @click="toggleSysMenu"
+          @dblclick.prevent="onSysClose"
+        >
+          <img class="title-icon" src="/assets/img/logo.ico" alt="" />
+        </button>
+        <span id="plc-dlg-title" class="dialog-title">PLC设备状态控制</span>
         <button type="button" class="dialog-close" title="关闭" @click="emit('close')">×</button>
+
+        <!-- 点图标系统菜单 — 对齐 Windows 标题栏图标菜单 -->
+        <div v-if="sysMenuOpen" class="sys-menu" @click.stop>
+          <button type="button" class="sys-item" disabled>还原(R)</button>
+          <button type="button" class="sys-item" disabled>移动(M)</button>
+          <button type="button" class="sys-item" disabled>大小(S)</button>
+          <button type="button" class="sys-item" disabled>最小化(N)</button>
+          <button type="button" class="sys-item" disabled>最大化(X)</button>
+          <div class="sys-sep" />
+          <button type="button" class="sys-item" @click="onSysClose">关闭(C)</button>
+        </div>
       </div>
 
       <div class="dialog-body">
-        <div class="light-grid">
-          <div
-            v-for="item in switches"
-            :key="item.key"
-            class="light-item"
-            :class="{ on: states[item.field] }"
+        <div
+          v-for="item in switches"
+          :key="item.key"
+          class="switch-row"
+        >
+          <span class="switch-label">{{ item.label }}</span>
+          <button
+            type="button"
+            class="switch-btn"
+            :title="item.label"
+            @click="onSwitchClick(item)"
           >
-            <span class="light-dot" aria-hidden="true" />
-            <span class="light-label">{{ item.label }}</span>
-            <button
-              class="toggle-btn"
-              :class="{ active: states[item.field] }"
-              :disabled="loading"
-              @click="toggleSwitch(item)"
-            >
-              {{ states[item.field] ? 'ON' : 'OFF' }}
-            </button>
-          </div>
-        </div>
-
-        <div class="urgent-info" :class="{ urgent: states.urgentstop }">
-          急停状态: {{ states.urgentstop ? '已急停 ⚠' : '正常' }}
+            <img
+              :src="states[item.field] ? '/assets/img/plcctrl_open.png' : '/assets/img/plcctrl_close.png'"
+              :alt="states[item.field] ? '开' : '关'"
+            />
+          </button>
         </div>
       </div>
 
+      <!-- 对齐 QMessageBox::question(this, "系统提醒", tipTxt, Yes|No) -->
       <QtMessageBox
-        v-if="tipVisible"
-        title="提示"
-        :message="tipMessage"
-        icon="warning"
-        :buttons="['yes']"
-        @yes="tipVisible = false"
-        @close="tipVisible = false"
+        v-if="confirmVisible"
+        title="系统提醒"
+        :message="confirmMessage"
+        icon="question"
+        :buttons="['yes', 'no']"
+        @yes="onConfirmYes"
+        @no="onConfirmNo"
+        @close="onConfirmNo"
       />
+
     </div>
   </div>
 </template>
@@ -133,121 +228,176 @@ async function toggleSwitch(item: SwitchItem) {
   position: fixed;
   inset: 0;
   z-index: 1500;
-  background: rgba(0, 0, 0, 0.35);
-  display: flex;
-  align-items: center;
-  justify-content: center;
+  /* 对齐 Qt 非模态挂靠按钮旁，无遮罩压暗 */
+  background: transparent;
 }
 
+/* 对齐 Qt geometry 160×290；定位由 anchor 决定 */
 .plc-dialog {
-  width: 420px;
+  position: fixed;
+  width: 160px;
+  height: 290px;
+  box-sizing: border-box;
   background: #f0f0f0;
   border: 1px solid #a0a0a0;
-  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.28);
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.28);
   font-family: 'Microsoft YaHei', 'Segoe UI', sans-serif;
+  display: flex;
+  flex-direction: column;
+  overflow: visible;
 }
 
 .dialog-titlebar {
+  position: relative;
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  padding: 6px 8px 6px 12px;
-  background: linear-gradient(180deg, #fff 0%, #f0f0f0 100%);
+  height: 28px;
+  padding: 0 2px 0 4px;
+  background: linear-gradient(180deg, #fff 0%, #ececec 100%);
   border-bottom: 1px solid #d0d0d0;
+  flex-shrink: 0;
+  user-select: none;
+}
+
+.title-icon-btn {
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: none;
+  background: transparent;
+  cursor: default;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.title-icon {
+  width: 16px;
+  height: 16px;
+  object-fit: contain;
+  display: block;
 }
 
 .dialog-title {
-  font-size: 13px;
+  flex: 1;
+  margin-left: 4px;
+  font-size: 12px;
   font-weight: 600;
   color: #1a1a1a;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .dialog-close {
   width: 28px;
-  height: 24px;
+  height: 22px;
   border: none;
   background: transparent;
-  font-size: 18px;
+  font-size: 16px;
+  line-height: 1;
   cursor: pointer;
-  &:hover { background: #e81123; color: #fff; }
+  color: #333;
+  flex-shrink: 0;
+
+  &:hover {
+    background: #e81123;
+    color: #fff;
+  }
+}
+
+.sys-menu {
+  position: absolute;
+  top: 26px;
+  left: 2px;
+  z-index: 20;
+  min-width: 120px;
+  padding: 2px 0;
+  background: #f2f2f2;
+  border: 1px solid #a0a0a0;
+  box-shadow: 2px 2px 6px rgba(0, 0, 0, 0.25);
+}
+
+.sys-item {
+  display: block;
+  width: 100%;
+  padding: 4px 18px 4px 28px;
+  border: none;
+  background: transparent;
+  text-align: left;
+  font-size: 12px;
+  font-family: 'Microsoft YaHei', sans-serif;
+  color: #1a1a1a;
+  cursor: default;
+
+  &:hover:not(:disabled) {
+    background: #0078d7;
+    color: #fff;
+  }
+
+  &:disabled {
+    color: #a0a0a0;
+  }
+}
+
+.sys-sep {
+  height: 1px;
+  margin: 3px 4px;
+  background: #c8c8c8;
 }
 
 .dialog-body {
-  padding: 20px 24px;
-}
-
-.light-grid {
+  flex: 1;
+  margin: 2px 4px 4px;
+  padding: 2px 6px;
+  border: 1px solid #c8c8c8;
+  background: #f5f5f5;
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  justify-content: space-between;
+  box-sizing: border-box;
+  overflow: hidden;
 }
 
-.light-item {
+.switch-row {
   display: flex;
   align-items: center;
-  gap: 12px;
-  padding: 8px 12px;
-  border: 1px solid #ddd;
-  border-radius: 6px;
-  background: #fff;
-  transition: background 0.2s;
-
-  &.on {
-    border-color: #52c41a;
-    background: #f6ffed;
-  }
+  justify-content: space-between;
+  gap: 8px;
+  min-height: 18px;
 }
 
-.light-dot {
-  width: 16px;
-  height: 16px;
-  border-radius: 50%;
-  background: #ccc;
-  flex-shrink: 0;
-}
-
-.light-item.on .light-dot {
-  background: #52c41a;
-  box-shadow: 0 0 6px #52c41a;
-}
-
-.light-label {
-  flex: 1;
-  font-size: 14px;
-  color: #333;
-}
-
-.toggle-btn {
-  min-width: 56px;
-  height: 30px;
-  border: 1px solid #ddd;
-  border-radius: 4px;
-  background: #f5f5f5;
+.switch-label {
   font-size: 12px;
-  font-weight: bold;
-  cursor: pointer;
-
-  &.active {
-    background: #1677ff;
-    color: #fff;
-    border-color: #1677ff;
-  }
-
-  &:disabled { opacity: 0.6; cursor: not-allowed; }
+  color: #1a1a1a;
+  white-space: nowrap;
+  line-height: 1;
 }
 
-.urgent-info {
-  margin-top: 16px;
-  padding: 8px 12px;
-  border-radius: 4px;
-  background: #f0f0f0;
-  text-align: center;
-  font-size: 13px;
-  font-weight: bold;
+.switch-btn {
+  width: 36px;
+  height: 18px;
+  padding: 0;
+  border: 1px solid transparent;
+  background: transparent;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
 
-  &.urgent {
-    background: #fff2f0;
-    color: #e81123;
+  img {
+    width: 32px;
+    height: 16px;
+    object-fit: contain;
+    display: block;
+    pointer-events: none;
+  }
+
+  &:focus-visible {
+    outline: 1px solid #0078d7;
+    outline-offset: 1px;
   }
 }
 </style>

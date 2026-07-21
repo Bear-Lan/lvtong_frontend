@@ -5,6 +5,7 @@ import { useWsStore } from '@/stores/useWsStore'
 import { request } from '@/api/request'
 
 import AppHeader from '@/components/AppHeader.vue'
+import type { ToolAnchor } from '@/components/AppHeader.vue'
 import EyeWidget from '@/components/EyeWidget.vue'
 import PreviewButton from '@/components/PreviewButton.vue'
 import BottomWorkflowPanel from '@/components/BottomWorkflowPanel.vue'
@@ -13,10 +14,10 @@ import BookingDialog from '@/modules/booking/BookingDialog.vue'
 import AgriculturalSelect from '@/components/AgriculturalSelect.vue'
 import LicensePlateEdit from '@/components/LicensePlateEdit.vue'
 import DeviceStatusPanel from '@/components/DeviceStatusPanel.vue'
-import QtMessageBox from '@/components/common/QtMessageBox.vue'
-import HistoryDialog from '@/modules/history/HistoryDialog.vue'
 import PlcControlDialog from '@/components/PlcControlDialog.vue'
 import AiStatusDialog from '@/components/AiStatusDialog.vue'
+import QtMessageBox from '@/components/common/QtMessageBox.vue'
+import HistoryDialog from '@/modules/history/HistoryDialog.vue'
 import { useBookingStore } from '@/modules/booking'
 import type { BookingAcceptPayload, BookingComingPayload } from '@/modules/booking'
 import { useRouter } from 'vue-router'
@@ -29,20 +30,14 @@ const router = useRouter()
 const showHistory = ref(false)
 const showPlcControl = ref(false)
 const showAiStatus = ref(false)
-
-// 通用消息弹窗
-const showMsg = ref<{ icon: 'info' | 'warning' | 'question'; message: string; visible: boolean }>({
-  icon: 'info', message: '', visible: false,
-})
-
-// 硬件实时状态
-const plcLights = ref({ red: false, yellow: false, green: false, greatlight: false })
-const xrayStats = ref({ kv200: '-', ma200: '-', temp200: '-', kv160: '-', ma160: '-', temp160: '-' })
-const deviceOnlineStatus = ref({ xray200: false, xray160: false })
+/** 对齐 Qt：弹窗贴在开关控制 / AI 按钮左下角 */
+const plcAnchor = ref<{ left: number; top: number } | null>(null)
+const aiAnchor = ref<{ left: number; top: number } | null>(null)
+/** 对齐 btn_webservice 在线图标 */
+const aiOnline = ref(false)
 const workflow = ref({
   bookingActive: false,
   distance: 0,
-  checkStep: 0,
 })
 
 /** 弹窗可见：与 Pinia 同步 — 对齐 m_pOrderDialog->show */
@@ -182,25 +177,6 @@ const captureButtons = [
   { key: 'license', label: '行驶证' },
   { key: 'evidence', label: '证据照' },
 ]
-const captureLoading = ref<Record<string, boolean>>({})
-
-async function onCapture(key: string) {
-  captureLoading.value[key] = true
-  try {
-    const res = await request<{ apiPath: string; size: number }>(`/capture/${key}`, {
-      method: 'POST',
-    })
-    if (res.code === 0) {
-      showMsg.value = { icon: 'info', message: `${captureButtons.find(b => b.key === key)?.label}采集成功`, visible: true }
-    } else {
-      showMsg.value = { icon: 'warning', message: res.message || '采集失败', visible: true }
-    }
-  } catch (e) {
-    showMsg.value = { icon: 'warning', message: '采集失败: ' + (e instanceof Error ? e.message : '未知错误'), visible: true }
-  } finally {
-    captureLoading.value[key] = false
-  }
-}
 
 // ---- 预约 — 对齐 LvTongPro::onCarComingClicked / onBookingDebounceTimeout ----
 function openBookingDialog() {
@@ -258,7 +234,7 @@ function onReset() {
 
 async function onConfirm() {
   if (!form.value.goods) {
-    showMsg.value = { icon: 'warning', message: '请选择农产品类型', visible: true }
+    alert('请选择农产品类型')
     return
   }
   const body: Record<string, unknown> = {
@@ -280,13 +256,13 @@ async function onConfirm() {
       body: JSON.stringify(body),
     })
     if (res.code === 0) {
-      showMsg.value = { icon: 'info', message: '提交成功', visible: true }
+      alert('提交成功')
       onReset()
     } else {
-      showMsg.value = { icon: 'warning', message: res.message || '提交失败', visible: true }
+      alert(res.message || '提交失败')
     }
   } catch (e) {
-    showMsg.value = { icon: 'warning', message: '提交失败: ' + (e instanceof Error ? e.message : '未知错误'), visible: true }
+    alert('提交失败: ' + (e instanceof Error ? e.message : '未知错误'))
   }
 }
 
@@ -314,17 +290,9 @@ function setupWS() {
   })
 
   wsStore.subscribe('plc_status', (msg) => {
-    const data = msg.data as Record<string, unknown> | undefined
-    // 更新 PLC 信号灯状态
-    if (data) {
-      plcLights.value = {
-        red: (data.redLightCmd ?? data.red ?? false) as boolean,
-        yellow: (data.yellowLightCmd ?? data.yellow ?? false) as boolean,
-        green: (data.greenLightCmd ?? data.green ?? false) as boolean,
-        greatlight: (data.createLightCmd ?? data.greatlight ?? data.greatLight ?? false) as boolean,
-      }
-    }
+    console.log('[WS] PLC状态:', msg.data)
     // 对齐 LvTongPro::onPLCStopChanged(bool value)
+    const data = msg.data as Record<string, unknown> | undefined
     const urgent =
       data?.urgentstop === true ||
       data?.urgentStop === true ||
@@ -336,35 +304,7 @@ function setupWS() {
   })
 
   wsStore.subscribe('detection_step', (msg) => {
-    const data = msg.data as { step?: number; message?: string } | undefined
-    if (data?.step != null) {
-      workflow.value.checkStep = data.step
-    }
-  })
-
-  wsStore.subscribe('xray_status', (msg) => {
-    const data = msg.data as Record<string, unknown> | undefined
-    if (data) {
-      xrayStats.value = {
-        kv200: (data.kv200 ?? data.kv_200 ?? '-') as string,
-        ma200: (data.ma200 ?? data.ma_200 ?? '-') as string,
-        temp200: (data.temp200 ?? data.temp_200 ?? '-') as string,
-        kv160: (data.kv160 ?? data.kv_160 ?? '-') as string,
-        ma160: (data.ma160 ?? data.ma_160 ?? '-') as string,
-        temp160: (data.temp160 ?? data.temp_160 ?? '-') as string,
-      }
-    }
-  })
-
-  wsStore.subscribe('device_status', (msg) => {
-    // 实时设备状态更新可用于 HardwareStatusBar
-    const data = msg.data as Record<string, unknown> | undefined
-    if (data) {
-      deviceOnlineStatus.value = {
-        xray200: (data.xray200 ?? data['xray_200'] ?? false) as boolean,
-        xray160: (data.xray160 ?? data['xray_160'] ?? false) as boolean,
-      }
-    }
+    console.log('[WS] 检测步骤:', msg.data)
   })
 
   // 对齐 PLC bookingStatus → 弹 OrderDialog
@@ -395,10 +335,37 @@ function onStopClick() {
   showStopConfirmBox.value = true
 }
 
-/** 顶栏工具 — 对齐 LvTongPro::onHistoryClicked / onStopClicked / 设备状态 */
-function onHeaderToolClick(key: string) {
+/** 顶栏工具 — 对齐 LvTongPro::onHistoryClicked / onPlcControl / onWebServiceClicked / 设备状态 */
+function onHeaderToolClick(key: string, anchor?: ToolAnchor) {
   if (key === 'history') {
     showHistory.value = true
+    return
+  }
+  if (key === 'plc') {
+    // 对齐 onPlcControl：贴按钮下方显示；再点同一按钮则关闭
+    if (showPlcControl.value) {
+      showPlcControl.value = false
+      return
+    }
+    showAiStatus.value = false
+    if (anchor) {
+      // Qt: mapToGlobal(QPoint(0, height)) → 左对齐、贴按钮底边
+      plcAnchor.value = { left: anchor.left, top: anchor.bottom }
+    }
+    showPlcControl.value = true
+    return
+  }
+  if (key === 'ai') {
+    // 对齐 onWebServiceClicked → WebServiceDialog
+    if (showAiStatus.value) {
+      showAiStatus.value = false
+      return
+    }
+    showPlcControl.value = false
+    if (anchor) {
+      aiAnchor.value = { left: anchor.left, top: anchor.bottom }
+    }
+    showAiStatus.value = true
     return
   }
   if (key === 'device') {
@@ -407,16 +374,11 @@ function onHeaderToolClick(key: string) {
   }
   if (key === 'stop') {
     onStopClick()
-    return
   }
-  if (key === 'plc') {
-    showPlcControl.value = true
-    return
-  }
-  if (key === 'ai') {
-    showAiStatus.value = true
-    return
-  }
+}
+
+function onAiStatusChange(online: boolean) {
+  aiOnline.value = online
 }
 
 async function onStopConfirmYes() {
@@ -465,6 +427,7 @@ onUnmounted(() => {
   <div class="dashboard">
     <AppHeader
       :username="auth.user?.realName"
+      :ai-online="aiOnline"
       @tool-click="onHeaderToolClick"
     />
 
@@ -515,7 +478,6 @@ onUnmounted(() => {
           <BottomWorkflowPanel
             :booking-active="workflow.bookingActive"
             :distance="workflow.distance"
-            :check-step="workflow.checkStep"
             @workflow-click="onWorkflowClick"
           />
         </div>
@@ -544,14 +506,8 @@ onUnmounted(() => {
             <span class="panel-title">图像采集</span>
           </div>
           <div class="capture-grid">
-            <button
-              v-for="btn in captureButtons"
-              :key="btn.key"
-              class="capture-btn"
-              :disabled="captureLoading[btn.key]"
-              @click="onCapture(btn.key)"
-            >
-              {{ captureLoading[btn.key] ? '采集中...' : btn.label }}
+            <button v-for="btn in captureButtons" :key="btn.key" class="capture-btn">
+              {{ btn.label }}
             </button>
           </div>
         </div>
@@ -669,22 +625,25 @@ onUnmounted(() => {
     <!-- 设备状态弹窗 -->
     <DeviceStatusPanel ref="deviceStatusRef" />
 
+    <!-- 开关控制 / PLC设备状态控制 — 对齐 PLCControlDialog -->
+    <PlcControlDialog
+      v-if="showPlcControl"
+      :anchor="plcAnchor"
+      @close="showPlcControl = false"
+    />
+
+    <!-- AI智能体连接状态 — 对齐 WebServiceDialog -->
+    <AiStatusDialog
+      v-if="showAiStatus"
+      :anchor="aiAnchor"
+      @close="showAiStatus = false"
+      @status-change="onAiStatusChange"
+    />
+
     <!-- 历史记录查询 — 对齐 HistoryDialog -->
     <HistoryDialog
       v-if="showHistory"
       @close="showHistory = false"
-    />
-
-    <!-- PLC 开关控制 — 对齐 Qt 开关控制面板 -->
-    <PlcControlDialog
-      v-if="showPlcControl"
-      @close="showPlcControl = false"
-    />
-
-    <!-- AI 智能体在线状态 -->
-    <AiStatusDialog
-      v-if="showAiStatus"
-      @close="showAiStatus = false"
     />
 
     <!-- 急停确认 — 对齐 QMessageBox::question 系统提醒 / 确定执行急停操作？ -->
@@ -718,17 +677,6 @@ onUnmounted(() => {
       :buttons="['yes']"
       @yes="stopErrorVisible = false"
       @close="stopErrorVisible = false"
-    />
-
-    <!-- 通用消息弹窗 -->
-    <QtMessageBox
-      v-if="showMsg.visible"
-      title="系统提醒"
-      :message="showMsg.message"
-      :icon="showMsg.icon"
-      :buttons="['yes']"
-      @yes="showMsg.visible = false"
-      @close="showMsg.visible = false"
     />
   </div>
 </template>

@@ -193,10 +193,8 @@ export function useBookingDialog() {
       bookingStore.applyReject()
       return { kind: 'reject' }
     } catch (e) {
-      const msg = e instanceof Error ? e.message : '操作失败'
-      errorMessage.value = msg
-      // 确认失败时保持对话框打开以便用户看到错误
-      return null
+      errorMessage.value = e instanceof Error ? e.message : '操作失败'
+      throw e
     } finally {
       submitting.value = false
     }

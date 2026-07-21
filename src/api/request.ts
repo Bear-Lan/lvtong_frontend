@@ -31,8 +31,8 @@ export async function request<T>(
     headers,
   })
 
-  // 401 自动跳转登录页（跳过登录接口本身）
-  if (res.status === 401 && !path.includes('/auth/login')) {
+  // 401 自动跳转登录页
+  if (res.status === 401) {
     localStorage.removeItem('lvtong_token')
     localStorage.removeItem('lvtong_user')
     if (window.location.pathname !== '/login') {
@@ -42,15 +42,7 @@ export async function request<T>(
   }
 
   if (!res.ok) {
-    // 优先使用后端返回的错误信息
-    let errorMessage = ''
-    try {
-      const body = await res.json() as ApiResponse<T>
-      errorMessage = body.message || ''
-    } catch {
-      // JSON 解析失败则忽略，使用通用错误
-    }
-    throw new Error(errorMessage || `请求失败: ${res.status}`)
+    throw new Error(`请求失败: ${res.status}`)
   }
 
   return res.json() as Promise<ApiResponse<T>>

@@ -33,7 +33,6 @@ import {
   isBrowsableImageUrl,
   parseVehicleSizeToMm,
   splitImagePaths,
-  toApiImageUrl,
 } from './utils/passCodeDisplay'
 
 const props = defineProps<{
@@ -139,32 +138,26 @@ const goodsGridStyle = computed(() => {
 })
 
 const transparentSrc = computed(() => {
-  const url = toApiImageUrl(record.value?.transparent_image_path)
-  if (isBrowsableImageUrl(url)) return url!
+  const raw = record.value?.transparent_image_path
+  if (isBrowsableImageUrl(raw)) return raw!
   return IMAGE_PLACEHOLDER.transparent
 })
 
 const bodySrc = computed(() => {
-  const url = toApiImageUrl(record.value?.body_image_path)
-  if (isBrowsableImageUrl(url)) return url!
+  const raw = record.value?.body_image_path
+  if (isBrowsableImageUrl(raw)) return raw!
   return IMAGE_PLACEHOLDER.body
 })
 
 const passCodeSrc = computed(() => {
-  const url = toApiImageUrl(record.value?.pass_code_image_path)
-  if (isBrowsableImageUrl(url)) return url!
+  const raw = record.value?.pass_code_image_path
+  if (isBrowsableImageUrl(raw)) return raw!
   return ''
 })
 
 function imgSrc(path?: string | null, fallback = IMAGE_PLACEHOLDER.default) {
-  const url = toApiImageUrl(path)
-  if (isBrowsableImageUrl(url)) return url!
+  if (isBrowsableImageUrl(path)) return path!
   return fallback
-}
-
-function onImageError(e: Event, fallback = '') {
-  const img = e.target as HTMLImageElement
-  if (img) img.src = fallback || IMAGE_PLACEHOLDER.default
 }
 
 function userLabel(u: UserOption) {
@@ -362,7 +355,7 @@ onMounted(async () => {
             <div v-for="p in topPhotos" :key="p.key" class="photo-col">
               <div class="photo-caption">{{ p.label }}</div>
               <div class="photo-img-box">
-                <img :src="imgSrc(p.path, IMAGE_PLACEHOLDER.default)" :alt="p.label" loading="lazy" @error="onImageError($event)" />
+                <img :src="imgSrc(p.path, IMAGE_PLACEHOLDER.default)" :alt="p.label" />
               </div>
             </div>
             <div class="photo-col">
@@ -375,7 +368,7 @@ onMounted(async () => {
                     class="thumb-cell"
                     :class="path ? goodsBorderClass(idx) : ''"
                   >
-                    <img :src="imgSrc(path, IMAGE_PLACEHOLDER.default)" alt="证据照" loading="lazy" @error="onImageError($event)" />
+                    <img :src="imgSrc(path, IMAGE_PLACEHOLDER.default)" alt="证据照" />
                   </div>
                 </div>
               </div>
@@ -388,13 +381,13 @@ onMounted(async () => {
           <div class="mid-cell">
             <div class="section-title">透视图像</div>
             <div class="wide-photo">
-              <img :src="transparentSrc" alt="透视图像" loading="lazy" @error="onImageError($event, IMAGE_PLACEHOLDER.transparent)" />
+              <img :src="transparentSrc" alt="透视图像" />
             </div>
           </div>
           <div class="mid-cell">
             <div class="section-title">车身图像</div>
             <div class="wide-photo">
-              <img :src="bodySrc" alt="车身图像" loading="lazy" @error="onImageError($event, IMAGE_PLACEHOLDER.body)" />
+              <img :src="bodySrc" alt="车身图像" />
             </div>
           </div>
           <div class="mid-cell">
@@ -406,7 +399,7 @@ onMounted(async () => {
                 class="thumb-cell"
                 :class="goodsBorderClass(idx)"
               >
-                <img :src="imgSrc(path, IMAGE_PLACEHOLDER.good)" alt="货物照片" loading="lazy" @error="onImageError($event, IMAGE_PLACEHOLDER.good)" />
+                <img :src="imgSrc(path, IMAGE_PLACEHOLDER.good)" alt="货物照片" />
               </div>
             </div>
           </div>
@@ -728,10 +721,12 @@ onMounted(async () => {
   justify-content: center;
   overflow: hidden;
 
+  /* 对齐 Qt setPreviewImage：IgnoreAspectRatio 拉伸填满固定容器 */
   img {
-    max-width: 100%;
-    max-height: 100%;
-    object-fit: contain;
+    width: 100%;
+    height: 100%;
+    object-fit: fill;
+    display: block;
   }
 }
 
@@ -775,11 +770,13 @@ onMounted(async () => {
   display: flex;
   align-items: center;
   justify-content: center;
+  overflow: hidden;
 
   img {
-    max-width: 100%;
-    max-height: 100%;
-    object-fit: contain;
+    width: 100%;
+    height: 100%;
+    object-fit: fill;
+    display: block;
   }
 }
 
@@ -812,7 +809,8 @@ onMounted(async () => {
   img {
     width: 100%;
     height: 100%;
-    object-fit: contain;
+    object-fit: fill;
+    display: block;
   }
 }
 

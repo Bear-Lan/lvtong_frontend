@@ -71,15 +71,6 @@ export function isBrowsableImageUrl(path?: string | null): boolean {
     path.startsWith('https://') ||
     path.startsWith('blob:') ||
     path.startsWith('data:') ||
-    path.startsWith('/api/images/') ||
     path.startsWith('/')
   )
-}
-
-/** 确保图像路径是浏览器可访问的 URL（后端已转换，前端仅做校验） */
-export function toApiImageUrl(dbPath?: string | null): string {
-  if (!dbPath) return ''
-  if (isBrowsableImageUrl(dbPath)) return dbPath
-  // 后端已经转换过，如果走到这里说明路径格式异常，返回空让前端显示占位图
-  return ''
 }

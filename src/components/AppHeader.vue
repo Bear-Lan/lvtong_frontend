@@ -1,14 +1,23 @@
 <script setup lang="ts">
-import { ref } from 'vue'
+import { computed, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { useAuthStore } from '@/stores/useAuthStore'
 
-defineProps<{
+export type ToolAnchor = {
+  left: number
+  top: number
+  bottom: number
+  right: number
+}
+
+const props = defineProps<{
   username?: string
+  /** 对齐 Qt btn_webservice 在线图标 */
+  aiOnline?: boolean
 }>()
 
 const emit = defineEmits<{
-  toolClick: [key: string]
+  toolClick: [key: string, anchor?: ToolAnchor]
 }>()
 
 const auth = useAuthStore()
@@ -19,17 +28,18 @@ function toggleUserMenu() {
   userMenuOpen.value = !userMenuOpen.value
 }
 
-function closeUserMenu() {
-  userMenuOpen.value = false
-}
-
 function handleLogout() {
   userMenuOpen.value = false
   auth.logout()
-  router.push('/login')
 }
 
-function handleToolClick(key: string) {
+function rectFromEl(el: EventTarget | null): ToolAnchor | undefined {
+  if (!(el instanceof HTMLElement)) return undefined
+  const r = el.getBoundingClientRect()
+  return { left: r.left, top: r.top, bottom: r.bottom, right: r.right }
+}
+
+function handleToolClick(key: string, e?: MouseEvent) {
   switch (key) {
     case 'user':
       router.push('/users')
@@ -39,20 +49,33 @@ function handleToolClick(key: string) {
     case 'stop':
     case 'plc':
     case 'ai':
-      emit('toolClick', key)
+      // 由主界面 Dashboard 处理弹窗（对齐 Qt 弹窗而非跳转页面）
+      emit(
+        'toolClick',
+        key,
+        key === 'plc' || key === 'ai' ? rectFromEl(e?.currentTarget ?? null) : undefined,
+      )
       break
     default:
       emit('toolClick', key)
   }
 }
 
-const tools = [
-  { key: 'history', icon: '/assets/img/s_record.png', tip: '历史记录' },
-  { key: 'plc', icon: '/assets/img/s_turn.png', tip: '开关控制' },
-  { key: 'ai', icon: '/assets/img/ai_model_offline.png', tip: 'AI智能体在线连接状态' },
-  { key: 'device', icon: '/assets/img/s_disconnect.png', tip: '设备连接状态' },
-  { key: 'user', icon: '/assets/img/usrmgr.png', tip: '用户管理' },
-]
+const tools = computed(() => {
+  // tip/icon 对齐 onAiModelOnlineStateChanged
+  const aiOnline = props.aiOnline === true
+  return [
+    { key: 'history', icon: '/assets/img/s_record.png', tip: '历史记录' },
+    { key: 'plc', icon: '/assets/img/s_turn.png', tip: '开关控制' },
+    {
+      key: 'ai',
+      icon: aiOnline ? '/assets/img/ai_model_online.png' : '/assets/img/ai_model_offline.png',
+      tip: aiOnline ? 'AI智能体连接状态：在线' : 'AI智能体连接状态：离线',
+    },
+    { key: 'device', icon: '/assets/img/s_disconnect.png', tip: '设备连接状态' },
+    { key: 'user', icon: '/assets/img/usrmgr.png', tip: '用户管理' },
+  ]
+})
 </script>
 
 <template>
@@ -70,7 +93,7 @@ const tools = [
         :key="t.key"
         class="tool-btn"
         :title="t.tip"
-        @click="handleToolClick(t.key)"
+        @click="handleToolClick(t.key, $event)"
       >
         <img :src="t.icon" :alt="t.tip" />
       </button>
