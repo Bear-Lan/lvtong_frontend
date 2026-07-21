@@ -16,6 +16,7 @@ import LicensePlateEdit from '@/components/LicensePlateEdit.vue'
 import DeviceStatusPanel from '@/components/DeviceStatusPanel.vue'
 import PlcControlDialog from '@/components/PlcControlDialog.vue'
 import AiStatusDialog from '@/components/AiStatusDialog.vue'
+import UserManager from '@/components/UserManager.vue'
 import QtMessageBox from '@/components/common/QtMessageBox.vue'
 import HistoryDialog from '@/modules/history/HistoryDialog.vue'
 import { useBookingStore } from '@/modules/booking'
@@ -31,6 +32,8 @@ const showHistory = ref(false)
 const showPlcControl = ref(false)
 const showAiStatus = ref(false)
 const showDeviceStatus = ref(false)
+const showUserMgr = ref(false)
+const showUsrMgrDenied = ref(false)
 /** 对齐 Qt：弹窗贴在对应按钮下方 */
 const plcAnchor = ref<{ left: number; top: number } | null>(null)
 const aiAnchor = ref<{ left: number; top: number } | null>(null)
@@ -383,6 +386,15 @@ function onHeaderToolClick(key: string, anchor?: ToolAnchor) {
   }
   if (key === 'stop') {
     onStopClick()
+    return
+  }
+  if (key === 'user') {
+    // 对齐 onUsrMgrClicked：仅 role==0 系统管理员可打开
+    if (Number(auth.user?.role) === 0) {
+      showUserMgr.value = true
+    } else {
+      showUsrMgrDenied.value = true
+    }
   }
 }
 
@@ -657,6 +669,22 @@ onUnmounted(() => {
       :anchor="aiAnchor"
       @close="showAiStatus = false"
       @status-change="onAiStatusChange"
+    />
+
+    <!-- 用户管理 — 对齐 UsrMgrDialog -->
+    <UserManager
+      v-if="showUserMgr"
+      @close="showUserMgr = false"
+    />
+
+    <QtMessageBox
+      v-if="showUsrMgrDenied"
+      title="通知"
+      message="系统管理员用户才能进行用户管理操作 !"
+      icon="warning"
+      :buttons="['yes']"
+      @yes="showUsrMgrDenied = false"
+      @close="showUsrMgrDenied = false"
     />
 
     <!-- 历史记录查询 — 对齐 HistoryDialog -->

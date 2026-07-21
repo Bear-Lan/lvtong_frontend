@@ -1,6 +1,5 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
-import { useRouter } from 'vue-router'
 import { useAuthStore } from '@/stores/useAuthStore'
 
 export type ToolAnchor = {
@@ -23,7 +22,6 @@ const emit = defineEmits<{
 }>()
 
 const auth = useAuthStore()
-const router = useRouter()
 const userMenuOpen = ref(false)
 
 function toggleUserMenu() {
@@ -44,13 +42,12 @@ function rectFromEl(el: EventTarget | null): ToolAnchor | undefined {
 function handleToolClick(key: string, e?: MouseEvent) {
   switch (key) {
     case 'user':
-      router.push('/users')
-      break
     case 'history':
     case 'device':
     case 'stop':
     case 'plc':
     case 'ai':
+      // 由主界面 Dashboard 处理弹窗（对齐 Qt 弹窗而非跳转页面）
       emit(
         'toolClick',
         key,
