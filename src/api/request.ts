@@ -16,6 +16,7 @@ export async function request<T>(
   options: RequestInit = {},
 ): Promise<ApiResponse<T>> {
   const token = localStorage.getItem('lvtong_token')
+    || sessionStorage.getItem('lvtong_token')
 
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',

@@ -6,9 +6,9 @@ import { useAuthStore } from '@/stores/useAuthStore'
 const router = useRouter()
 const auth = useAuthStore()
 
-const username = ref('')
+const username = ref(auth.getRememberedUsername() || '')
 const password = ref('')
-const remember = ref(true)
+const remember = ref(auth.getRememberedUsername() !== '')
 const reviewerPhone = ref('18627774208')
 const errorMsg = ref('')
 const submitting = ref(false)

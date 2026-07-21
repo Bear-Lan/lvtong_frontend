@@ -4,6 +4,8 @@
  * 点击用户名 → QMenu：修改密码 / 切换班组
  */
 import { computed, onMounted, onUnmounted, ref } from 'vue'
+import { useRouter } from 'vue-router'
+import { useAuthStore } from '@/stores/useAuthStore'
 import ChangePasswordDialog from '@/components/ChangePasswordDialog.vue'
 import ChangeUsrDialog from '@/components/ChangeUsrDialog.vue'
 
@@ -46,6 +48,15 @@ function onChangePassword() {
 function onChangeUsr() {
   closeUserMenu()
   showChangeUsr.value = true
+}
+
+const authStore = useAuthStore()
+const router = useRouter()
+
+function onLogout() {
+  closeUserMenu()
+  authStore.logout()
+  router.push('/login')
 }
 
 function onDocClick(e: MouseEvent) {
@@ -140,6 +151,9 @@ const tools = computed(() => {
           </button>
           <button type="button" class="user-menu-item" @click="onChangeUsr">
             切换班组
+          </button>
+          <button type="button" class="user-menu-item user-menu-logout" @click="onLogout">
+            退出登录
           </button>
         </div>
       </div>

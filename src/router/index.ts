@@ -33,6 +33,7 @@ const router = createRouter({
 
 router.beforeEach((to) => {
   const token = localStorage.getItem('lvtong_token')
+    || sessionStorage.getItem('lvtong_token')
   if (!to.meta.public && !token) {
     return { name: 'login' }
   }
