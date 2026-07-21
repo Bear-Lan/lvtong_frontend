@@ -9,6 +9,7 @@ const auth = useAuthStore()
 const username = ref(auth.getRememberedUsername() || '')
 const password = ref('')
 const remember = ref(auth.getRememberedUsername() !== '')
+const showPassword = ref(false)
 const reviewerPhone = ref('18627774208')
 const errorMsg = ref('')
 const submitting = ref(false)
@@ -103,13 +104,23 @@ async function handleLogin() {
         />
 
         <label class="field-label">密码</label>
-        <input
-          v-model="password"
-          class="field-input"
-          type="password"
-          placeholder="请输入密码"
-          @keyup.enter="handleLogin"
-        />
+        <div class="password-wrap">
+          <input
+            v-model="password"
+            class="field-input"
+            :type="showPassword ? 'text' : 'password'"
+            placeholder="请输入密码"
+            @keyup.enter="handleLogin"
+          />
+          <button
+            type="button"
+            class="password-eye"
+            :title="showPassword ? '隐藏密码' : '显示密码'"
+            @mousedown.prevent="showPassword = true"
+            @mouseup="showPassword = false"
+            @mouseleave="showPassword = false"
+          >👁</button>
+        </div>
 
         <label class="field-label">复核人</label>
         <div class="select-wrap">
@@ -368,6 +379,35 @@ async function handleLogin() {
   border-right: 5px solid transparent;
   border-top: 7px solid $accept-green;
   pointer-events: none;
+}
+
+.password-wrap {
+  position: relative;
+  .field-input {
+    padding-right: 44px;
+    /* 隐藏 Edge/Chrome 浏览器原生的密码显示按钮 */
+    &::-ms-reveal,
+    &::-ms-clear,
+    &::-webkit-credentials-auto-fill-button,
+    &::-webkit-password-toggle-button {
+      display: none;
+    }
+  }
+}
+
+.password-eye {
+  position: absolute;
+  right: 10px;
+  top: 50%;
+  transform: translateY(-50%);
+  background: none;
+  border: none;
+  font-size: 18px;
+  cursor: pointer;
+  padding: 4px;
+  line-height: 1;
+  user-select: none;
+  &:hover { opacity: 0.7; }
 }
 
 .form-options {
