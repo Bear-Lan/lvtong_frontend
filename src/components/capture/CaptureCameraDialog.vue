@@ -1,9 +1,9 @@
 <script setup lang="ts">
 /**
  * 图像采集弹窗 — 1:1 对齐 Qt GetPic/Tail/Top/Goods/Evidence (1400×713)
- * - 球机：显示「360°球机操作云台」+ 右侧竖排 拍照/确认选择
- * - 其它相机：隐藏云台，底部 拍照 | 确认选择 横排等宽
- * - 货物/证据：左下「图片数量: n/max」+「选中删除」
+ * - 球机：显示云台；horizontalLayout：云台 | 拍照 | 确认选择（横排）
+ * - 其它相机：隐藏云台，拍照 | 确认选择 横排
+ * - 货物/证据才有「图片数量」+「选中删除」（GetGoods/Evidence）；车头/尾/顶无
  */
 import { computed, onMounted, ref, watch } from 'vue'
 
@@ -165,7 +165,6 @@ function toggleTalk() {
         <section class="col col-left">
           <div class="img-stage" @click="openPreview">
             <img v-if="selectedSrc" :src="selectedSrc" class="stage-img" alt="" />
-            <span v-else class="stage-ph">拍照显示区域</span>
           </div>
 
           <div class="gallery">
@@ -205,14 +204,15 @@ function toggleTalk() {
             </button>
           </div>
 
-          <div class="img-stage live">
-            <span class="stage-ph">实时摄像头画面区域</span>
+          <div class="live-stage">
+            <span class="live-ph">实时摄像头画面区域</span>
           </div>
 
-          <!-- 球机：云台 + 竖排按钮；其它：横排双按钮 -->
-          <div class="bottom-ctrl" :class="{ 'with-ptz': showPtz }">
-            <fieldset v-show="showPtz" class="ptz">
-              <legend>360°球机操作云台</legend>
+          <!-- 对齐 Qt horizontalLayout_2：云台 | 拍照 | spacer | 确认选择（始终横排） -->
+          <div class="bottom-ctrl">
+            <!-- 用 div 模拟 QGroupBox：fieldset+flex 无法撑满高度 -->
+            <div v-show="showPtz" class="ptz">
+              <div class="ptz-title">360°球机操作云台</div>
               <div class="ptz-body">
                 <div class="ptz-dirs">
                   <button type="button" class="ptz-btn">↖</button>
@@ -240,9 +240,9 @@ function toggleTalk() {
                   />
                 </button>
               </div>
-            </fieldset>
+            </div>
 
-            <div class="actions" :class="{ stacked: showPtz, row: !showPtz }">
+            <div class="actions">
               <button type="button" class="btn-shot" @click="onCaptureClick">拍照</button>
               <button type="button" class="btn-ok" @click="onConfirm">确认选择</button>
             </div>
@@ -350,9 +350,9 @@ function toggleTalk() {
   }
 }
 
-/* 预览 / 实时画面：截图浅灰大块 */
+/* 左侧预览：空态无提示字（对齐截图空白） */
 .img-stage {
-  flex: 1;
+  flex: 8 1 0;
   min-height: 0;
   background: #e8e8e8;
   display: flex;
@@ -360,17 +360,7 @@ function toggleTalk() {
   justify-content: center;
   overflow: hidden;
   position: relative;
-}
-
-.img-stage.live {
-  flex: 1;
-  cursor: default;
-}
-
-.col-left .img-stage {
   cursor: pointer;
-  /* 预览区略高于相册：约 stretch 对应 Qt 8:0 */
-  flex: 8 1 0;
 }
 
 .stage-img {
@@ -381,7 +371,18 @@ function toggleTalk() {
   background: #ddd;
 }
 
-.stage-ph {
+/* 右侧实时区：直接贴合面板底色，无卡片外框/内阴影 */
+.live-stage {
+  flex: 1;
+  min-height: 0;
+  background: transparent;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+}
+
+.live-ph {
   font-size: 15px;
   color: #666;
   user-select: none;
@@ -485,62 +486,84 @@ function toggleTalk() {
   }
 }
 
-/* 底部控制区 */
+/* 底部：对齐 Qt horizontalLayout_2（云台3 | 拍照2 | spacer | 确认2），始终横排 */
 .bottom-ctrl {
   flex: 0 0 auto;
   margin-top: 10px;
   display: flex;
-  gap: 12px;
+  flex-direction: row;
   align-items: stretch;
-  min-height: 148px;
-
-  &.with-ptz {
-    min-height: 168px;
-  }
+  gap: 12px;
+  height: 160px;
+  min-height: 160px;
 }
 
+/* 模拟 Qt QGroupBox：内部横纵 1fr 铺满，对称饱满 */
 .ptz {
-  flex: 3;
+  flex: 3 1 0;
+  position: relative;
   margin: 0;
-  padding: 4px 8px 8px;
+  padding: 16px 10px 10px;
   border: 1px solid #c8c8c8;
   background: #fafafa;
   box-sizing: border-box;
   min-width: 0;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+}
 
-  legend {
-    font-size: 12px;
-    color: #333;
-    padding: 0 4px;
-  }
+.ptz-title {
+  position: absolute;
+  top: -8px;
+  left: 12px;
+  padding: 0 6px;
+  background: #fafafa;
+  font-size: 12px;
+  color: #333;
+  line-height: 1.2;
+  pointer-events: none;
 }
 
 .ptz-body {
+  flex: 1 1 auto;
   display: flex;
-  align-items: center;
+  flex-direction: row;
+  align-items: stretch;
   gap: 10px;
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  box-sizing: border-box;
 }
 
-/* 3×4：方向 3×3 + 焦距行；对讲在右侧 */
+/* 3×4 等分铺满左侧区域 */
 .ptz-dirs {
+  flex: 1 1 auto;
   display: grid;
-  grid-template-columns: repeat(3, 36px);
-  grid-template-rows: repeat(4, 28px);
-  gap: 4px 6px;
-  justify-content: start;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-rows: repeat(4, minmax(0, 1fr));
+  gap: 6px 10px;
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
 }
 
 .ptz-btn {
-  width: 36px;
-  height: 28px;
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
   border: 1px solid #4caf50;
   border-radius: 10px;
   background: #fff;
-  color: #2e7d32;
-  font-size: 14px;
+  color: #222;
+  font-size: clamp(14px, 2.2vh, 18px);
   line-height: 1;
   cursor: pointer;
   padding: 0;
+  box-sizing: border-box;
 
   &:hover {
     background: #45a049;
@@ -549,7 +572,7 @@ function toggleTalk() {
 
   &:active {
     background: #388e3c;
-    border-color: #2e7d32;
+    border: 2px solid #2e7d32;
     color: #fff;
   }
 }
@@ -558,14 +581,19 @@ function toggleTalk() {
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 12px;
+  width: 100%;
+  height: 100%;
+  font-size: 13px;
   color: #333;
+  box-sizing: border-box;
 }
 
+/* 麦克风：占右侧一列，垂直居中于整高 */
 .ptz-talk {
-  flex-shrink: 0;
-  width: 40px;
-  height: 64px;
+  flex: 0 0 22%;
+  max-width: 72px;
+  min-width: 52px;
+  height: 100%;
   border: none;
   background: transparent;
   cursor: pointer;
@@ -573,68 +601,54 @@ function toggleTalk() {
   display: flex;
   align-items: center;
   justify-content: center;
+  box-sizing: border-box;
 
   img {
-    width: 32px;
-    height: 32px;
+    width: 70%;
+    max-width: 52px;
+    height: auto;
+    aspect-ratio: 1;
     object-fit: contain;
+    /* 深灰近黑，提高对比 */
+    filter: brightness(0) invert(18%);
   }
 }
 
 .actions {
+  flex: 4 1 0;
   display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 12px;
   min-width: 0;
-
-  &.stacked {
-    flex: 2;
-    flex-direction: column;
-    justify-content: space-between;
-    gap: 16px;
-  }
-
-  &.row {
-    flex: 1;
-    flex-direction: row;
-    gap: 16px;
-  }
+  height: 100%;
 }
 
 .btn-shot,
 .btn-ok {
+  flex: 1 1 0;
+  height: 48px;
+  padding: 0 10px;
   border: none;
   border-radius: 4px;
-  font-size: 15px;
+  font-size: 14px;
   font-weight: bold;
   cursor: pointer;
-  height: 56px;
-}
-
-.actions.stacked .btn-shot,
-.actions.stacked .btn-ok {
-  width: 100%;
-  flex: 1;
-}
-
-.actions.row .btn-shot,
-.actions.row .btn-ok {
-  flex: 1;
-  height: 64px;
 }
 
 .btn-shot {
   background: #1677ff;
   color: #fff;
   &:hover {
-    background: #4096ff;
+    color: #4096ff;
   }
 }
 
 .btn-ok {
   background: #059669;
-  color: #e8e8e8;
+  color: #ddd;
   &:hover {
     color: #fff;
-    filter: brightness(1.05);
   }
 }
 
