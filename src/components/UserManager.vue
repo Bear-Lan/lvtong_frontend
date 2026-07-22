@@ -76,6 +76,20 @@ function groupLabel(g: number | string | undefined) {
   return `班组${n}`
 }
 
+const USERTYPE_MAP: Record<string, string> = {
+  '1': '站长',
+  '2': '班长',
+  '3': '查验人员',
+  '4': '复核人员',
+}
+
+function userTypeLabel(usertype?: string) {
+  if (!usertype) return ''
+  return usertype.split('|')
+    .map(code => USERTYPE_MAP[code] || code)
+    .join('|')
+}
+
 function displayId(u: UserRow, index: number) {
   if (u.id != null) return String(u.id)
   return String(index + 1)
@@ -297,7 +311,7 @@ onMounted(() => {
                 <td>{{ u.phone || '' }}</td>
                 <td class="col-grp">{{ groupLabel(u.usergroup) }}</td>
                 <td>{{ roleLabel(u.role) }}</td>
-                <td>{{ u.usertype || '' }}</td>
+                <td>{{ userTypeLabel(u.usertype) }}</td>
               </tr>
             </tbody>
           </table>
