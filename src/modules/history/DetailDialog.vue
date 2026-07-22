@@ -114,27 +114,65 @@ const evidenceSlots = computed(() => {
 
 const evidenceGridStyle = computed(() => {
   const n = evidenceSlots.value.length
-  if (n <= 1) return { gridTemplateColumns: '1fr', gridTemplateRows: '1fr' }
-  if (n <= 4) return { gridTemplateColumns: `repeat(${n}, 1fr)`, gridTemplateRows: '1fr' }
-  if (n <= 6) return { gridTemplateColumns: 'repeat(3, 1fr)', gridTemplateRows: 'repeat(2, 1fr)' }
-  return { gridTemplateColumns: 'repeat(4, 1fr)', gridTemplateRows: 'repeat(2, 1fr)' }
+  if (n <= 1) {
+    return { gridTemplateColumns: 'minmax(0, 1fr)', gridTemplateRows: 'minmax(0, 1fr)' }
+  }
+  if (n <= 4) {
+    return {
+      gridTemplateColumns: `repeat(${n}, minmax(0, 1fr))`,
+      gridTemplateRows: 'minmax(0, 1fr)',
+    }
+  }
+  if (n <= 6) {
+    return {
+      gridTemplateColumns: 'repeat(3, minmax(0, 1fr))',
+      gridTemplateRows: 'repeat(2, minmax(0, 1fr))',
+    }
+  }
+  return {
+    gridTemplateColumns: 'repeat(4, minmax(0, 1fr))',
+    gridTemplateRows: 'repeat(2, minmax(0, 1fr))',
+  }
 })
 
-/** 货物照 — 空时固定 3 列竖条（蓝/绿/蓝），对齐目标图 */
+/** 货物照格 — 对齐 setPreviewGoodImages
+ * 空：3 竖条占位（蓝/绿/蓝，对齐目标空态图）
+ * 有图：按张数分格，不把 1 张垫成 3 列（否则会挤扁）
+ */
 const goodsSlots = computed(() => {
   const list = splitImagePaths(record.value?.goods_image_path)
   if (!list.length) return ['', '', '']
-  if (list.length < 3) {
-    return [...list, ...Array(3 - list.length).fill('')]
-  }
-  return list
+  return list.slice(0, 10)
 })
 
+/** 对齐 Qt nCtrlWidth=420 / nCtrlHeight=190 的分格规则 */
 const goodsGridStyle = computed(() => {
-  const n = goodsSlots.value.length
-  if (n <= 3) return { gridTemplateColumns: `repeat(${n}, 1fr)`, gridTemplateRows: '1fr' }
-  if (n <= 5) return { gridTemplateColumns: `repeat(${Math.min(n, 3)}, 1fr)`, gridTemplateRows: 'repeat(2, 1fr)' }
-  return { gridTemplateColumns: 'repeat(5, 1fr)', gridTemplateRows: 'repeat(2, 1fr)' }
+  const n = splitImagePaths(record.value?.goods_image_path).length
+  if (n === 0) {
+    return { gridTemplateColumns: 'repeat(3, minmax(0, 1fr))', gridTemplateRows: 'minmax(0, 1fr)' }
+  }
+  if (n <= 4) {
+    return {
+      gridTemplateColumns: `repeat(${n}, minmax(0, 1fr))`,
+      gridTemplateRows: 'minmax(0, 1fr)',
+    }
+  }
+  if (n <= 6) {
+    return {
+      gridTemplateColumns: 'repeat(3, minmax(0, 1fr))',
+      gridTemplateRows: 'repeat(2, minmax(0, 1fr))',
+    }
+  }
+  if (n <= 8) {
+    return {
+      gridTemplateColumns: 'repeat(4, minmax(0, 1fr))',
+      gridTemplateRows: 'repeat(2, minmax(0, 1fr))',
+    }
+  }
+  return {
+    gridTemplateColumns: 'repeat(5, minmax(0, 1fr))',
+    gridTemplateRows: 'repeat(2, minmax(0, 1fr))',
+  }
 })
 
 const transparentSrc = computed(() => {
@@ -710,10 +748,13 @@ onMounted(async () => {
 }
 
 .photo-img-box {
-  flex: 1;
-  min-height: 160px;
-  height: 170px;
-  margin: 0 6px 4px;
+  /* 对齐 Qt label_* 固定 240×180，容器不被图片撑开 */
+  width: 240px;
+  height: 180px;
+  max-width: 100%;
+  margin: 0 auto 4px;
+  flex: 0 0 auto;
+  box-sizing: border-box;
   background: #fff;
   border: 1px solid #d0d0d0;
   display: flex;
@@ -721,17 +762,24 @@ onMounted(async () => {
   justify-content: center;
   overflow: hidden;
 
-  /* 对齐 Qt setPreviewImage：IgnoreAspectRatio 拉伸填满固定容器 */
   img {
     width: 100%;
     height: 100%;
-    object-fit: fill;
+    max-width: 100%;
+    max-height: 100%;
+    object-fit: contain;
+    object-position: center;
     display: block;
   }
 }
 
 .evidence-wrap {
   padding: 2px;
+  width: 240px;
+  height: 180px;
+  max-width: 100%;
+  margin: 0 auto 4px;
+  box-sizing: border-box;
 }
 
 .evidence-grid {
@@ -739,6 +787,8 @@ onMounted(async () => {
   height: 100%;
   display: grid;
   gap: 2px;
+  min-width: 0;
+  min-height: 0;
 }
 
 .photos-mid {
@@ -746,16 +796,34 @@ onMounted(async () => {
   display: flex;
   border: 1px solid rgba(155, 184, 168, 0.55);
   background: rgba(255, 255, 255, 0.35);
-  min-height: 188px;
+  /* 对齐 Qt groupBox 高 220 */
+  height: 220px;
+  min-height: 220px;
+  max-height: 220px;
+  box-sizing: border-box;
 }
 
 .mid-cell {
-  flex: 1;
   min-width: 0;
   display: flex;
   flex-direction: column;
   border-right: 1px solid #c0c8c4;
   padding: 2px 6px 6px;
+  box-sizing: border-box;
+
+  /* 对齐 Qt：透视430 / 车身420 / 货物470 */
+  &:nth-child(1) {
+    flex: 0 0 430px;
+    width: 430px;
+  }
+  &:nth-child(2) {
+    flex: 0 0 420px;
+    width: 420px;
+  }
+  &:nth-child(3) {
+    flex: 1 1 470px;
+    min-width: 0;
+  }
 
   &:last-child {
     border-right: none;
@@ -763,8 +831,11 @@ onMounted(async () => {
 }
 
 .wide-photo {
-  flex: 1;
-  min-height: 148px;
+  /* 对齐 label_transparent / label_body 400×180 */
+  width: 100%;
+  height: 180px;
+  flex: 0 0 180px;
+  box-sizing: border-box;
   background: #fff;
   border: 1px solid #d0d0d0;
   display: flex;
@@ -775,19 +846,27 @@ onMounted(async () => {
   img {
     width: 100%;
     height: 100%;
-    object-fit: fill;
+    max-width: 100%;
+    max-height: 100%;
+    object-fit: contain;
+    object-position: center;
     display: block;
   }
 }
 
 .goods-grid {
-  flex: 1;
-  min-height: 148px;
+  /* 对齐 gridLayoutWidget ≈451×191，内部按张数分格 */
+  width: 100%;
+  height: 190px;
+  flex: 0 0 190px;
   display: grid;
   gap: 4px;
   padding: 2px;
+  box-sizing: border-box;
   background: #fff;
   border: 1px solid #d0d0d0;
+  overflow: hidden;
+  min-width: 0;
 }
 
 .thumb-cell {
@@ -795,8 +874,10 @@ onMounted(async () => {
   display: flex;
   align-items: center;
   justify-content: center;
+  min-width: 0;
   min-height: 0;
   background: #fff;
+  box-sizing: border-box;
 
   &.border-blue {
     border: 2px solid #1e6fff;
@@ -809,7 +890,10 @@ onMounted(async () => {
   img {
     width: 100%;
     height: 100%;
-    object-fit: fill;
+    max-width: 100%;
+    max-height: 100%;
+    object-fit: contain;
+    object-position: center;
     display: block;
   }
 }
