@@ -20,6 +20,9 @@ import AiStatusDialog from '@/components/AiStatusDialog.vue'
 import UserManager from '@/components/UserManager.vue'
 import QtMessageBox from '@/components/common/QtMessageBox.vue'
 import HistoryDialog from '@/modules/history/HistoryDialog.vue'
+import CaptureCameraDialog from '@/components/capture/CaptureCameraDialog.vue'
+import type { CaptureKind } from '@/components/capture/CaptureCameraDialog.vue'
+import DrivingLicenseDialog from '@/components/capture/DrivingLicenseDialog.vue'
 import { useBookingStore } from '@/modules/booking'
 import type { BookingAcceptPayload, BookingComingPayload } from '@/modules/booking'
 import { useRouter } from 'vue-router'
@@ -181,15 +184,62 @@ async function checkHistoryCount(plate: string) {
   }
 }
 
-// ---- 图像采集 ----
+// ---- 图像采集 — 对齐 btn_head/tail/top/goods/license/evidence ----
 const captureButtons = [
-  { key: 'head', label: '车头' },
-  { key: 'tail', label: '车尾' },
-  { key: 'top', label: '车顶' },
-  { key: 'goods', label: '货物' },
-  { key: 'license', label: '行驶证' },
-  { key: 'evidence', label: '证据照' },
+  { key: 'head' as const, label: '车头' },
+  { key: 'tail' as const, label: '车尾' },
+  { key: 'top' as const, label: '车顶' },
+  { key: 'goods' as const, label: '货物' },
+  { key: 'license' as const, label: '行驶证' },
+  { key: 'evidence' as const, label: '证据照' },
 ]
+
+type CaptureKey = (typeof captureButtons)[number]['key']
+
+const captureDialog = ref<CaptureKind | null>(null)
+const showLicenseDialog = ref(false)
+
+/** 各格缩略图（blob/url），对齐 Qt setIcon 回写 */
+const captureThumbs = ref<Partial<Record<CaptureKey, string>>>({})
+/** 多图列表：货物 / 证据 */
+const captureLists = ref<{ goods: string[]; evidence: string[] }>({
+  goods: [],
+  evidence: [],
+})
+const licensePaths = ref({ license: '', licenseGc: '' })
+
+function onCaptureClick(key: CaptureKey) {
+  if (key === 'license') {
+    showLicenseDialog.value = true
+    return
+  }
+  captureDialog.value = key
+}
+
+function onCaptureConfirm(kind: CaptureKind, images: string[]) {
+  if (kind === 'goods') {
+    captureLists.value.goods = images
+    captureThumbs.value.goods = images[0] || ''
+  } else if (kind === 'evidence') {
+    captureLists.value.evidence = images
+    captureThumbs.value.evidence = images[0] || ''
+  } else {
+    captureThumbs.value[kind] = images[0] || ''
+  }
+}
+
+function onLicenseConfirm(payload: { license: string; licenseGc: string }) {
+  licensePaths.value = payload
+  // 对齐合并后显示到 btn_license：优先主证
+  captureThumbs.value.license = payload.license || payload.licenseGc || ''
+}
+
+function captureInitialImages(kind: CaptureKind): string[] {
+  if (kind === 'goods') return [...captureLists.value.goods]
+  if (kind === 'evidence') return [...captureLists.value.evidence]
+  const one = captureThumbs.value[kind]
+  return one ? [one] : []
+}
 
 // ---- 预约 — 对齐 LvTongPro::onCarComingClicked / onBookingDebounceTimeout ----
 function openBookingDialog() {
@@ -542,8 +592,22 @@ onUnmounted(() => {
             <span class="panel-title">图像采集</span>
           </div>
           <div class="capture-grid">
-            <button v-for="btn in captureButtons" :key="btn.key" class="capture-btn">
-              {{ btn.label }}
+            <button
+              v-for="btn in captureButtons"
+              :key="btn.key"
+              type="button"
+              class="capture-btn"
+              :class="{ 'has-thumb': !!captureThumbs[btn.key] }"
+              :title="btn.label"
+              @click="onCaptureClick(btn.key)"
+            >
+              <img
+                v-if="captureThumbs[btn.key]"
+                :src="captureThumbs[btn.key]"
+                :alt="btn.label"
+                class="capture-thumb"
+              />
+              <span v-else>{{ btn.label }}</span>
             </button>
           </div>
         </div>
@@ -664,6 +728,24 @@ onUnmounted(() => {
       :model-value="form.size"
       @confirm="onCarSizeConfirm"
       @close="showCarSize = false"
+    />
+
+    <!-- 图像采集弹窗 — 对齐 GetPic/Tail/Top/Goods/Evidence -->
+    <CaptureCameraDialog
+      v-if="captureDialog"
+      :kind="captureDialog"
+      :initial-images="captureInitialImages(captureDialog)"
+      @confirm="(imgs) => onCaptureConfirm(captureDialog!, imgs)"
+      @close="captureDialog = null"
+    />
+
+    <!-- 行驶证 — 对齐 GetDrivingPicDialog -->
+    <DrivingLicenseDialog
+      v-if="showLicenseDialog"
+      :license-src="licensePaths.license"
+      :license-gc-src="licensePaths.licenseGc"
+      @confirm="onLicenseConfirm"
+      @close="showLicenseDialog = false"
     />
 
     <!-- 设备连接状态 — 对齐 onSettingClicked DeviceStatusPopup -->
@@ -928,7 +1010,25 @@ onUnmounted(() => {
   color: #999;
   cursor: pointer;
   transition: color 0.15s, border-color 0.15s;
+  padding: 0;
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+
   &:hover { color: #666; border-color: #666; }
+
+  &.has-thumb {
+    border-style: solid;
+    border-color: #ccc;
+  }
+}
+
+.capture-thumb {
+  width: 100%;
+  height: 100%;
+  object-fit: fill;
+  display: block;
 }
 
 .form-header { padding-left: 20px; }
