@@ -108,15 +108,16 @@ onUnmounted(() => {
 })
 
 /** 点击开关：先弹确认，对齐 onBtnClicked */
+/** 正在请求中的开关 key，非空时对应按钮显示加载动画 */
+const loadingKey = ref<string | null>(null)
+
 function onSwitchClick(item: SwitchItem) {
-  if (confirmVisible.value) return
+  if (confirmVisible.value || errorVisible.value || loadingKey.value) return
   const next = !states.value[item.field]
   pending = { key: item.key, next }
   confirmMessage.value = next ? item.tipOn : item.tipOff
   confirmVisible.value = true
 }
-
-let sending = false
 
 /** 确认开关操作 → 下发后端 API，成功后再切本地图标 */
 async function onConfirmYes() {
@@ -126,8 +127,8 @@ async function onConfirmYes() {
   const { key, next } = pending
   pending = null
 
-  if (sending) return
-  sending = true
+  if (loadingKey.value) return
+  loadingKey.value = key
 
   try {
     // POST /api/device/plc-control → { [key]: next }
@@ -142,7 +143,7 @@ async function onConfirmYes() {
     errorMessage.value = e?.message || 'PLC 控制指令发送失败'
     errorVisible.value = true
   } finally {
-    sending = false
+    loadingKey.value = null
   }
 }
 
@@ -222,10 +223,15 @@ const dialogStyle = computed(() => {
           <button
             type="button"
             class="switch-btn"
+            :class="{ 'is-loading': loadingKey === item.key }"
             :title="item.label"
+            :disabled="loadingKey !== null"
             @click="onSwitchClick(item)"
           >
+            <!-- 加载中：旋转动画圆环 -->
+            <span v-if="loadingKey === item.key" class="switch-spinner" aria-label="加载中" />
             <img
+              v-else
               :src="states[item.field] ? '/assets/img/plcctrl_open.png' : '/assets/img/plcctrl_close.png'"
               :alt="states[item.field] ? '开' : '关'"
             />
@@ -436,5 +442,29 @@ const dialogStyle = computed(() => {
     outline: 1px solid #0078d7;
     outline-offset: 1px;
   }
+
+  &:disabled {
+    cursor: not-allowed;
+    opacity: 0.6;
+  }
+
+  &.is-loading {
+    opacity: 1;
+  }
+}
+
+/* 加载旋转动画 */
+.switch-spinner {
+  display: block;
+  width: 14px;
+  height: 14px;
+  border: 2px solid #c0c0c0;
+  border-top-color: #0078d7;
+  border-radius: 50%;
+  animation: plc-spin 0.6s linear infinite;
+}
+
+@keyframes plc-spin {
+  to { transform: rotate(360deg); }
 }
 </style>
