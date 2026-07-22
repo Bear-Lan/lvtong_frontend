@@ -7,6 +7,7 @@
  */
 import { onMounted, onUnmounted, ref, computed } from 'vue'
 import { useWsStore } from '@/stores/useWsStore'
+import { request } from '@/api/request'
 import QtMessageBox from '@/components/common/QtMessageBox.vue'
 
 const props = defineProps<{
@@ -22,6 +23,10 @@ const wsStore = useWsStore()
 const confirmVisible = ref(false)
 const confirmMessage = ref('')
 let pending: { key: string; next: boolean } | null = null
+
+/** 错误提示框 */
+const errorVisible = ref(false)
+const errorMessage = ref('')
 
 /** 标题栏系统菜单（对齐 Windows 点窗口图标） */
 const sysMenuOpen = ref(false)
@@ -111,13 +116,34 @@ function onSwitchClick(item: SwitchItem) {
   confirmVisible.value = true
 }
 
-/** 当前仅 UI 对齐：确认后只切换本地图标，不下发后端 */
-function onConfirmYes() {
+let sending = false
+
+/** 确认开关操作 → 下发后端 API，成功后再切本地图标 */
+async function onConfirmYes() {
   confirmVisible.value = false
   if (!pending) return
+
   const { key, next } = pending
   pending = null
-  states.value[key] = next
+
+  if (sending) return
+  sending = true
+
+  try {
+    // POST /api/device/plc-control → { [key]: next }
+    await request('/device/plc-control', {
+      method: 'POST',
+      body: JSON.stringify({ [key]: next }),
+    })
+    // 下发成功 → 切换本地图标
+    states.value[key] = next
+  } catch (e: any) {
+    // 下发失败 → 保持原状态，弹错误提示
+    errorMessage.value = e?.message || 'PLC 控制指令发送失败'
+    errorVisible.value = true
+  } finally {
+    sending = false
+  }
 }
 
 function onConfirmNo() {
@@ -217,6 +243,17 @@ const dialogStyle = computed(() => {
         @yes="onConfirmYes"
         @no="onConfirmNo"
         @close="onConfirmNo"
+      />
+
+      <!-- PLC 控制失败 → QMessageBox::warning 单按钮 -->
+      <QtMessageBox
+        v-if="errorVisible"
+        title="控制失败"
+        :message="errorMessage"
+        icon="warning"
+        :buttons="['ok']"
+        @ok="errorVisible = false"
+        @close="errorVisible = false"
       />
 
     </div>

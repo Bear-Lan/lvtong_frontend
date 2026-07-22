@@ -4,7 +4,7 @@
  * 对齐 LvTongPro::onStopClicked / onPLCStopChanged 等处的 QMessageBox::question
  */
 export type MessageBoxIcon = 'question' | 'warning' | 'info' | 'critical'
-export type MessageBoxButton = 'yes' | 'no'
+export type MessageBoxButton = 'yes' | 'no' | 'ok'
 
 const props = withDefaults(
   defineProps<{
@@ -27,6 +27,7 @@ const props = withDefaults(
 const emit = defineEmits<{
   yes: []
   no: []
+  ok: []
   close: []
 }>()
 
@@ -38,6 +39,8 @@ function onTitleClose() {
   // 对齐 QMessageBox 点 X：等价于取消/否（有否则否，否则关闭）
   if (props.buttons.includes('no')) {
     emit('no')
+  } else if (props.buttons.includes('ok')) {
+    emit('ok')
   } else {
     emit('close')
   }
@@ -88,6 +91,15 @@ function onTitleClose() {
           @click="emit('no')"
         >
           否(No)
+        </button>
+        <button
+          v-if="buttons.includes('ok')"
+          type="button"
+          class="qt-btn"
+          autofocus
+          @click="emit('ok')"
+        >
+          确定
         </button>
       </div>
     </div>

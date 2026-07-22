@@ -43,7 +43,13 @@ export async function request<T>(
   }
 
   if (!res.ok) {
-    throw new Error(`请求失败: ${res.status}`)
+    // 尝试读取后端返回的错误信息
+    let message = `请求失败: ${res.status}`
+    try {
+      const body: ApiResponse = await res.json()
+      if (body.message) message = body.message
+    } catch { /* 无法解析 body 时使用默认 message */ }
+    throw new Error(message)
   }
 
   return res.json() as Promise<ApiResponse<T>>
