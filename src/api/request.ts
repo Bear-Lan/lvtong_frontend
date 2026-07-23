@@ -1,5 +1,10 @@
 import { appConfig } from '@/config/env'
 
+export interface RequestOptions extends RequestInit {
+  /** 请求超时时间（毫秒），默认 30000 */
+  timeout?: number
+}
+
 export interface ApiResponse<T = unknown> {
   code: number
   message: string
@@ -10,13 +15,16 @@ export interface ApiResponse<T = unknown> {
  * 统一请求封装
  * - 自动附加 Authorization: Bearer <token>
  * - 401 时清除 token 并跳转登录页
+ * - 默认 30 秒超时，防止后端阻塞导致前端卡死
  */
 export async function request<T>(
   path: string,
-  options: RequestInit = {},
+  options: RequestOptions = {},
 ): Promise<ApiResponse<T>> {
   const token = localStorage.getItem('lvtong_token')
     || sessionStorage.getItem('lvtong_token')
+
+  const { timeout = 30000, ...fetchOptions } = options
 
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
@@ -27,10 +35,25 @@ export async function request<T>(
     headers['Authorization'] = `Bearer ${token}`
   }
 
-  const res = await fetch(`${appConfig.apiBaseUrl}${path}`, {
-    ...options,
-    headers,
-  })
+  // 超时控制：使用 AbortController 防止请求无限等待
+  const controller = new AbortController()
+  const timeoutId = setTimeout(() => controller.abort(), timeout)
+
+  let res: Response
+  try {
+    res = await fetch(`${appConfig.apiBaseUrl}${path}`, {
+      ...fetchOptions,
+      headers,
+      signal: controller.signal,
+    })
+  } catch (e: unknown) {
+    if (e instanceof DOMException && e.name === 'AbortError') {
+      throw new Error('请求超时，请检查网络或后端服务')
+    }
+    throw e
+  } finally {
+    clearTimeout(timeoutId)
+  }
 
   // 401 自动跳转登录页
   if (res.status === 401) {
