@@ -67,19 +67,21 @@ const truckLabel = computed(() => {
 </template>
 
 <style scoped lang="scss">
-/* Qt: graphicsView height 62, BASE_Y 58 */
+/* Qt: graphicsView height 62, BASE_Y 58 — 虚线贴底，紧挨状态栏 */
 .truck-scene {
   position: relative;
   width: 100%;
   height: 62px;
-  flex-shrink: 0;
+  flex: 0 0 62px;
 }
 
 .progress-line {
   position: absolute;
   left: 0;
   right: 0;
-  top: 58px;
+  /* 贴容器底边，与状态栏顶部分隔线重合 */
+  bottom: 0;
+  top: auto;
   width: 100%;
   height: 2px;
 }
@@ -87,7 +89,8 @@ const truckLabel = computed(() => {
 /* Qt: addEllipse 8x8 描边 + 4x4 实心内点 */
 .node {
   position: absolute;
-  top: 54px;
+  bottom: -3px;
+  top: auto;
   width: 8px;
   height: 8px;
   margin-left: -4px;
@@ -111,7 +114,8 @@ const truckLabel = computed(() => {
 
 .truck {
   position: absolute;
-  top: 28px;
+  bottom: 8px;
+  top: auto;
   height: 28px;
   width: auto;
   transform: translateX(-50%);
@@ -120,7 +124,8 @@ const truckLabel = computed(() => {
 
 .truck-label {
   position: absolute;
-  top: 28px;
+  bottom: 8px;
+  top: auto;
   margin-left: 8px;
   transform: translateX(-50%);
   font-size: 12px;

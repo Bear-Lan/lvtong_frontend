@@ -155,191 +155,98 @@ withDefaults(
 
 
 <style scoped lang="scss">
-
-/* 恢复初始版：整行贴底，左/中/右三组等距分布，组内元素等间距 */
-
+/* 整行贴底，紧挨虚线；去掉原浅灰顶边线（由虚线覆盖） */
 .hardware-bar {
-
   display: flex;
-
   align-items: center;
-
   justify-content: space-between;
-
   width: 100%;
-
   padding: 4px 12px;
-
   min-height: 36px;
-
-  border-top: 1px solid #eee;
-
+  border-top: none;
   background: #fff;
-
-  flex-shrink: 0;
-
-  margin-top: auto;
-
+  flex: 0 0 auto;
+  margin-top: 0;
 }
-
-
 
 .section {
-
   display: flex;
-
   align-items: center;
-
   justify-content: space-evenly;
-
   gap: 8px;
-
   flex: 1;
-
   min-width: 0;
-
 }
-
-
 
 .center-section {
-
   flex: 1.2;
-
 }
-
-
 
 .xray-section:first-child {
-
   justify-content: flex-start;
-
   padding-left: 28px;
-
 }
-
-
 
 .xray-section:last-child {
-
   justify-content: flex-end;
-
   padding-right: 4px;
-
 }
-
-
 
 .xray-icon {
-
   width: 28px;
-
   height: 28px;
-
   object-fit: contain;
-
   flex-shrink: 0;
-
 }
-
-
 
 .stat {
-
   display: inline-flex;
-
   align-items: center;
-
   gap: 2px;
-
   font-size: 12px;
-
   font-weight: bold;
-
   color: #666;
-
   white-space: nowrap;
-
 }
-
-
 
 .stat-icon {
-
   width: 16px;
-
   height: 16px;
-
   flex-shrink: 0;
-
 }
-
-
 
 .mini-label {
-
   font-size: 8px;
-
   color: #333;
-
   white-space: nowrap;
-
 }
-
-
 
 .icon-btn {
-
   padding: 0;
-
   border: none;
-
   background: transparent;
-
   cursor: pointer;
-
   display: inline-flex;
-
   line-height: 0;
-
 }
-
-
 
 .mini-icon {
-
   width: 16px;
-
   height: 16px;
-
   object-fit: contain;
-
 }
-
-
 
 .plc-icon {
-
   width: 20px;
-
   height: 20px;
-
   object-fit: contain;
-
   flex-shrink: 0;
 
-
-
   &.highlight {
-
     box-shadow: 0 0 0 2px rgba(239, 68, 68, 0.4);
-
     border-radius: 50%;
-
   }
-
 }
-
 </style>
 
 

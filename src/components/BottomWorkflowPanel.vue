@@ -45,21 +45,14 @@ const emit = defineEmits<{
 
 
 <style scoped lang="scss">
-
 .left-bottom {
-
   display: flex;
-
   flex-direction: column;
-
   width: 100%;
-
   height: 100%;
-
   overflow: hidden;
-
+  /* 图标区吃满剩余高度，虚线贴状态栏（不再被 margin-top:auto 拉开） */
 }
-
 </style>
 
 

@@ -127,11 +127,13 @@ const cellWidthPct = `${(SEGMENT_PIX / SCENE_WIDTH) * 100}%`
 
 
 <style scoped lang="scss">
-
-/* Qt: icon_lc 48x24, icon_xray 24x24, label 11pt bold */
+/* 吃满虚线以上空间，图标等比放大后垂直居中 */
 .workflow-icons {
-  padding: 6px 0;
-  flex-shrink: 0;
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  align-items: center;
+  padding: 4px 0 2px;
 }
 
 .workflow-row {
@@ -149,7 +151,7 @@ const cellWidthPct = `${(SEGMENT_PIX / SCENE_WIDTH) * 100}%`
   display: flex;
   flex-direction: column;
   align-items: flex-start;
-  gap: 2px;
+  gap: 4px;
   padding: 0;
   border: none;
   background: transparent;
@@ -161,19 +163,20 @@ const cellWidthPct = `${(SEGMENT_PIX / SCENE_WIDTH) * 100}%`
   }
 }
 
+/* 相对原 Qt 再放大一档，对齐目标图饱满观感 */
 .wf-icon {
-  width: 24px;
-  height: 24px;
+  width: 52px;
+  height: 52px;
   object-fit: contain;
 
   &.wide {
-    width: 48px;
-    height: 24px;
+    width: 104px;
+    height: 52px;
   }
 }
 
 .wf-label {
-  font-size: 11px;
+  font-size: 14px;
   font-weight: bold;
   color: #333;
   white-space: nowrap;
@@ -182,7 +185,6 @@ const cellWidthPct = `${(SEGMENT_PIX / SCENE_WIDTH) * 100}%`
     color: #059669;
   }
 }
-
 </style>
 
 
