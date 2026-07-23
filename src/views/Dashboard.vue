@@ -80,19 +80,78 @@ async function loadDicts() {
   }
 }
 
-// ---- 透视参数 ----
+// ---- 透视参数 — 对齐 Qt sb_gammavalue / sb_whitevalue ----
+/** 灰场 QDoubleSpinBox：max=5, step=0.5, 默认 2.00 */
 const gammaValue = ref(2.0)
 const gammaText = ref('2.00')
+/** 亮场 QSpinBox：max=255, step=16, 默认 128 */
 const whiteValue = ref(128)
+const whiteText = ref('128')
+
+const GAMMA_MIN = 0
+const GAMMA_MAX = 5
+const GAMMA_STEP = 0.5
+const WHITE_MIN = 0
+const WHITE_MAX = 255
+const WHITE_STEP = 16
+
+function clampNum(n: number, min: number, max: number) {
+  return Math.min(max, Math.max(min, n))
+}
+
+function syncGamma(n: number) {
+  gammaValue.value = clampNum(n, GAMMA_MIN, GAMMA_MAX)
+  gammaText.value = gammaValue.value.toFixed(2)
+}
+
+function syncWhite(n: number) {
+  whiteValue.value = clampNum(Math.round(n), WHITE_MIN, WHITE_MAX)
+  whiteText.value = String(whiteValue.value)
+}
+
+function bumpGamma(delta: number) {
+  const next = Math.round((gammaValue.value + delta) / GAMMA_STEP) * GAMMA_STEP
+  syncGamma(next)
+}
+
+function bumpWhite(delta: number) {
+  syncWhite(whiteValue.value + delta)
+}
 
 function onGammaBlur() {
   const n = Number.parseFloat(gammaText.value)
-  if (!Number.isNaN(n)) {
-    gammaValue.value = n
-    gammaText.value = n.toFixed(2)
-  } else {
+  if (Number.isNaN(n)) {
     gammaText.value = gammaValue.value.toFixed(2)
+    return
   }
+  syncGamma(n)
+}
+
+function onWhiteBlur() {
+  const n = Number.parseInt(whiteText.value, 10)
+  if (Number.isNaN(n)) {
+    whiteText.value = String(whiteValue.value)
+    return
+  }
+  syncWhite(n)
+}
+
+/** 透视影像路径 — 对齐 m_currentTanPath；删除确认后清空 */
+const transparentImageUrl = ref('')
+const showTransDelConfirm = ref(false)
+
+/** 对齐 LvTongPro::onPreviewTansDel */
+function onTransDelClick() {
+  showTransDelConfirm.value = true
+}
+
+function onTransDelYes() {
+  showTransDelConfirm.value = false
+  transparentImageUrl.value = ''
+}
+
+function onTransDelNo() {
+  showTransDelConfirm.value = false
 }
 
 // ---- 绿通信息表单 ----
@@ -520,43 +579,64 @@ onUnmounted(() => {
     <div class="dashboard-body">
       <!-- 左侧 -->
       <section class="panel-left">
-        <!-- 车身影像 -->
+        <!-- 车身影像 — 对齐 Qt：标题左，保存/切换/预览贴右上角 -->
         <div class="panel-card panel-stretch">
           <div class="panel-header panel-header-body">
             <img src="/assets/img/a_car.png" class="panel-icon" alt="" />
             <span class="panel-title">车身影像</span>
-            <button class="header-icon-btn" title="点云量测车辆轮廓长宽高---图片保存">
+            <span class="header-spacer" aria-hidden="true" />
+            <button type="button" class="header-icon-btn" title="点云量测车辆轮廓长宽高---图片保存">
               <img src="/assets/img/good_save.png" alt="" />
             </button>
-            <button class="header-icon-btn header-icon-swap" title="切换视角">
+            <button type="button" class="header-icon-btn header-icon-swap" title="切换视角">
               <img src="/assets/img/a_leftright.png" alt="" />
             </button>
             <PreviewButton label="预览" />
-            <span class="header-spacer" />
           </div>
           <EyeWidget large placeholder="车身影像" />
         </div>
 
-        <!-- 透视影像 -->
+        <!-- 透视影像 — 灰场/亮场对齐 QDoubleSpinBox / QSpinBox -->
         <div class="panel-card panel-stretch">
           <div class="panel-header panel-header-xray">
             <img src="/assets/img/a_xray.png" class="panel-icon" alt="" />
             <span class="panel-title">透视影像</span>
             <span class="xray-meta">200图像：</span>
             <span class="xray-label">灰场</span>
-            <input
-              v-model="gammaText"
-              type="text"
-              inputmode="decimal"
-              class="xray-spin is-active"
-              @blur="onGammaBlur"
-            />
+            <div class="xray-spinbox is-active">
+              <input
+                v-model="gammaText"
+                class="xray-spin-input"
+                type="text"
+                inputmode="decimal"
+                @blur="onGammaBlur"
+                @keydown.enter="onGammaBlur"
+              />
+              <div class="spin-btns">
+                <button type="button" class="spin-btn" title="增加" @click="bumpGamma(GAMMA_STEP)">▴</button>
+                <button type="button" class="spin-btn" title="减少" @click="bumpGamma(-GAMMA_STEP)">▾</button>
+              </div>
+            </div>
             <span class="xray-label">亮场</span>
-            <input v-model.number="whiteValue" type="number" step="16" min="0" max="255" class="xray-spin" />
-            <button class="action-btn">删除</button>
-            <button class="action-btn">渲染</button>
+            <div class="xray-spinbox">
+              <input
+                v-model="whiteText"
+                class="xray-spin-input"
+                type="text"
+                inputmode="numeric"
+                @blur="onWhiteBlur"
+                @keydown.enter="onWhiteBlur"
+              />
+              <div class="spin-btns">
+                <button type="button" class="spin-btn" title="增加" @click="bumpWhite(WHITE_STEP)">▴</button>
+                <button type="button" class="spin-btn" title="减少" @click="bumpWhite(-WHITE_STEP)">▾</button>
+              </div>
+            </div>
+            <PreviewButton label="删除" title="不合格透视图删除" @click="onTransDelClick" />
+            <PreviewButton label="渲染" />
+            <PreviewButton label="预览" />
           </div>
-          <EyeWidget large placeholder="透视影像" />
+          <EyeWidget large placeholder="透视影像" :image-url="transparentImageUrl || undefined" />
         </div>
 
         <!-- 底部：流程图标 + 车辆动画 + 硬件状态 -->
@@ -805,6 +885,18 @@ onUnmounted(() => {
       @close="onStopConfirmNo"
     />
 
+    <!-- 透视图删除 — 对齐 onPreviewTansDel：确认 / 确定要删除透视图 ？ -->
+    <QtMessageBox
+      v-if="showTransDelConfirm"
+      title="确认"
+      message="确定要删除透视图 ？"
+      icon="question"
+      :buttons="['yes', 'no']"
+      @yes="onTransDelYes"
+      @no="onTransDelNo"
+      @close="onTransDelNo"
+    />
+
     <!-- 急停复位 — 对齐 onPLCStopChanged：仅「是」按钮 -->
     <QtMessageBox
       v-if="showStopResetBox"
@@ -930,14 +1022,27 @@ onUnmounted(() => {
   color: $text-dark;
 }
 
-.panel-header-body .panel-title { margin-right: 0; }
+.panel-header-body .panel-title {
+  margin-right: 0;
+}
+
 .panel-header .panel-title,
-.form-header .panel-title { margin-right: auto; }
+.form-header .panel-title {
+  margin-right: auto;
+}
+
+/* 车身：中间弹性空白，把保存/切换/预览顶到右上角（对齐图1） */
+.panel-header-body .header-spacer {
+  flex: 1 1 auto;
+  width: auto;
+  min-width: 8px;
+  margin-left: 0;
+  margin-right: 0;
+}
 
 .header-spacer {
   flex: 0 0 40px;
   width: 40px;
-  margin-left: auto;
 }
 
 .header-icon-btn {
@@ -946,37 +1051,110 @@ onUnmounted(() => {
   padding: 2px;
   display: flex;
   align-items: center;
-  img { width: 24px; height: 24px; }
-  &:disabled { opacity: 0.4; cursor: not-allowed; }
+  cursor: pointer;
+  img {
+    width: 24px;
+    height: 24px;
+  }
+  &:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+  }
 }
-.header-icon-swap img { width: 16px; height: 16px; }
+.header-icon-swap img {
+  width: 16px;
+  height: 16px;
+}
 
-.xray-meta { font-size: 12px; color: $text-gray; }
-.xray-label { font-size: 12px; color: $text-gray; }
+.xray-meta {
+  font-size: 12px;
+  color: $text-gray;
+}
+.xray-label {
+  font-size: 12px;
+  color: $text-gray;
+}
 
-.xray-spin {
-  width: 56px;
-  height: 24px;
+/* 对齐 Qt QSpinBox / QDoubleSpinBox：数值 + 上下调节钮 */
+.xray-spinbox {
+  display: inline-flex;
+  align-items: stretch;
+  height: 26px;
   border: 1px solid #c5d5f8;
   border-radius: 3px;
-  padding: 0 6px;
+  background: #fff;
+  overflow: hidden;
+  box-sizing: border-box;
+
+  &.is-active {
+    background: #dbeafe;
+    border-color: #93b4f5;
+  }
+}
+
+.xray-spin-input {
+  width: 44px;
+  border: none;
+  outline: none;
+  background: transparent;
   font-size: 12px;
   text-align: center;
-  background: #fff;
-  outline: none;
-  &.is-active { background: #dbeafe; border-color: #93b4f5; }
-  &:focus { background: #dbeafe; border-color: #60a5fa; }
+  padding: 0 4px;
+  color: #222;
+}
+
+.spin-btns {
+  display: flex;
+  flex-direction: column;
+  width: 16px;
+  border-left: 1px solid #c5d5f8;
+  flex-shrink: 0;
+}
+
+.spin-btn {
+  flex: 1;
+  margin: 0;
+  padding: 0;
+  border: none;
+  background: #eef4ff;
+  color: #304daf;
+  font-size: 9px;
+  line-height: 1;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+
+  &:hover {
+    background: #dbeafe;
+  }
+
+  &:active {
+    background: #c2d8ff;
+  }
+
+  & + & {
+    border-top: 1px solid #c5d5f8;
+  }
 }
 
 .action-btn {
+  /* 与 PreviewButton 一致（若别处仍引用） */
   border: 2px solid $btn-preview-bg;
   border-radius: 10px;
   background: $btn-preview-bg;
   color: $btn-preview-text;
-  padding: 2px 10px;
-  font-size: 12px;
+  padding: 2px 12px;
+  font-size: 13px;
   font-weight: bold;
+  min-height: 28px;
   cursor: pointer;
+  transition: all 0.15s;
+
+  &:hover {
+    border-color: $btn-preview-text;
+    background: #c2d8ff;
+  }
 }
 
 .video-area {
