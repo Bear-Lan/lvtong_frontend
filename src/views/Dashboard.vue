@@ -138,9 +138,50 @@ function onWhiteBlur() {
   syncWhite(n)
 }
 
+/** 车身影像 — 车身图 / 车顶图 / 车侧图 三视图循环切换 */
+type BodyView = 'body' | 'top' | 'side'
+const BODY_VIEW_ORDER: BodyView[] = ['body', 'top', 'side']
+const BODY_VIEW_LABELS: Record<BodyView, string> = {
+  body: '车身图',
+  top: '车顶图',
+  side: '车侧图',
+}
+const bodyView = ref<BodyView>('body')
+const bodyImageUrls = ref<Record<BodyView, string>>({
+  body: '',
+  top: '',
+  side: '',
+})
+const bodyImageUrl = computed(() => bodyImageUrls.value[bodyView.value])
+const bodyViewLabel = computed(() => BODY_VIEW_LABELS[bodyView.value])
+
+function onBodyViewSwap() {
+  const idx = BODY_VIEW_ORDER.indexOf(bodyView.value)
+  bodyView.value = BODY_VIEW_ORDER[(idx + 1) % BODY_VIEW_ORDER.length]
+}
+
 /** 透视影像路径 — 对齐 m_currentTanPath；删除确认后清空 */
-const transparentImageUrl = ref('')
+type XrayView = '200' | '160' | 'mosaic'
+const XRAY_VIEW_ORDER: XrayView[] = ['200', '160', 'mosaic']
+const XRAY_VIEW_LABELS: Record<XrayView, string> = {
+  '200': '200图像',
+  '160': '160图像',
+  mosaic: '拼接图',
+}
+const xrayView = ref<XrayView>('200')
+const xrayImageUrls = ref<Record<XrayView, string>>({
+  '200': '',
+  '160': '',
+  mosaic: '',
+})
+const transparentImageUrl = computed(() => xrayImageUrls.value[xrayView.value])
+const xrayViewLabel = computed(() => XRAY_VIEW_LABELS[xrayView.value])
 const showTransDelConfirm = ref(false)
+
+function onXrayViewSwap() {
+  const idx = XRAY_VIEW_ORDER.indexOf(xrayView.value)
+  xrayView.value = XRAY_VIEW_ORDER[(idx + 1) % XRAY_VIEW_ORDER.length]
+}
 
 /** 对齐 LvTongPro::onPreviewTansDel */
 function onTransDelClick() {
@@ -149,7 +190,7 @@ function onTransDelClick() {
 
 function onTransDelYes() {
   showTransDelConfirm.value = false
-  transparentImageUrl.value = ''
+  xrayImageUrls.value = { '200': '', '160': '', mosaic: '' }
 }
 
 function onTransDelNo() {
@@ -636,20 +677,18 @@ watch(anyDialogOpen, async (open) => {
     <div class="dashboard-body">
       <!-- 左侧 -->
       <section class="panel-left">
-        <!-- 车身影像 — 对齐 Qt：标题左，保存/切换/预览贴右上角 -->
+        <!-- 车身影像 — 车身图 / 车顶图 / 车侧图 三视图循环切换 -->
         <div class="panel-card panel-stretch">
           <div class="panel-header panel-header-body">
             <img src="/assets/img/a_car.png" class="panel-icon" alt="" />
             <span class="panel-title">车身影像</span>
             <span class="header-spacer" aria-hidden="true" />
-            <button type="button" class="header-icon-btn" title="点云量测车辆轮廓长宽高---图片保存">
-              <img src="/assets/img/good_save.png" alt="" />
-            </button>
-            <button type="button" class="header-icon-btn header-icon-swap" title="切换视角">
+            <span class="xray-meta">{{ bodyViewLabel }}：</span>
+            <button type="button" class="header-icon-btn header-icon-swap" title="切换视角" @click="onBodyViewSwap">
               <img src="/assets/img/a_leftright.png" alt="" />
             </button>
           </div>
-          <EyeWidget large placeholder="车身影像" />
+          <EyeWidget large placeholder="车身影像" :image-url="bodyImageUrl || undefined" />
         </div>
 
         <!-- 透视影像 — 灰场/亮场对齐 QDoubleSpinBox / QSpinBox -->
@@ -657,7 +696,7 @@ watch(anyDialogOpen, async (open) => {
           <div class="panel-header panel-header-xray">
             <img src="/assets/img/a_xray.png" class="panel-icon" alt="" />
             <span class="panel-title">透视影像</span>
-            <span class="xray-meta">200图像：</span>
+            <span class="xray-meta">{{ xrayViewLabel }}：</span>
             <span class="xray-label">灰场</span>
             <div class="xray-spinbox is-active">
               <input
@@ -690,6 +729,9 @@ watch(anyDialogOpen, async (open) => {
             </div>
             <PreviewButton label="删除" title="不合格透视图删除" @click="onTransDelClick" />
             <PreviewButton label="渲染" />
+            <button type="button" class="header-icon-btn header-icon-swap" title="切换视角" @click="onXrayViewSwap">
+              <img src="/assets/img/a_leftright.png" alt="" />
+            </button>
           </div>
           <EyeWidget large placeholder="透视影像" :image-url="transparentImageUrl || undefined" />
         </div>
