@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref } from 'vue'
+import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useAuthStore } from '@/stores/useAuthStore'
 import { useWsStore } from '@/stores/useWsStore'
 import { request } from '@/api/request'
@@ -26,6 +26,8 @@ import DrivingLicenseDialog from '@/components/capture/DrivingLicenseDialog.vue'
 import { useBookingStore } from '@/modules/booking'
 import type { BookingAcceptPayload, BookingComingPayload } from '@/modules/booking'
 import { useRouter } from 'vue-router'
+import { useHikvisionPlayer } from '@/composables/useHikvisionPlayer'
+import { resolveCameraDeviceId } from '@/config/hikvision'
 
 const auth = useAuthStore()
 const wsStore = useWsStore()
@@ -258,6 +260,21 @@ type CaptureKey = (typeof captureButtons)[number]['key']
 const captureDialog = ref<CaptureKind | null>(null)
 const showLicenseDialog = ref(false)
 
+// ---- 实时视频：车顶相机（camera2）----
+const videoStageRef = ref<HTMLElement | null>(null)
+const {
+  status: videoStatus,
+  statusText: videoStatusText,
+  iframeRef: videoIframeRef,
+  iframeSrc: videoIframeSrc,
+  start: startVideo,
+  stop: stopVideo,
+  onIframeLoad: onVideoIframeLoad,
+} = useHikvisionPlayer(videoStageRef)
+
+const videoHint = computed(() => videoStatusText.value || '实时视频')
+const showVideoHint = computed(() => videoStatus.value !== 'playing')
+
 /** 各格缩略图（blob/url），对齐 Qt setIcon 回写 */
 const captureThumbs = ref<Partial<Record<CaptureKey, string>>>({})
 /** 多图列表：货物 / 证据 */
@@ -267,6 +284,7 @@ const captureLists = ref<{ goods: string[]; evidence: string[] }>({
 })
 const licensePaths = ref({ license: '', licenseGc: '' })
 
+/** 任意弹窗打开时暂停 Dashboard 视频，避免海康原生窗口穿透到弹窗之上 */
 function onCaptureClick(key: CaptureKey) {
   if (key === 'license') {
     showLicenseDialog.value = true
@@ -557,13 +575,52 @@ function onStopResetClose() {
   showStopResetBox.value = false
 }
 
-onMounted(() => {
+onMounted(async () => {
   loadDicts()
   setupWS()
+
+  // 浏览器打开即接上车顶相机视频流
+  await nextTick()
+  await new Promise<void>((r) => requestAnimationFrame(() => r()))
+  startVideo(resolveCameraDeviceId('车顶相机'))
 })
 
 onUnmounted(() => {
   wsStore.disconnect()
+  void stopVideo()
+})
+
+/** 任意弹窗打开时暂停 Dashboard 视频，避免海康原生窗口穿透到弹窗之上 */
+const anyDialogOpen = computed(
+  () =>
+    showBooking.value ||
+    showHistory.value ||
+    showPlcControl.value ||
+    showAiStatus.value ||
+    showDeviceStatus.value ||
+    showUserMgr.value ||
+    showUsrMgrDenied.value ||
+    showCarSize.value ||
+    captureDialog.value !== null ||
+    showLicenseDialog.value ||
+    showStopConfirmBox.value ||
+    showStopResetBox.value ||
+    stopErrorVisible.value ||
+    showTransDelConfirm.value,
+)
+let videoPausedForDialog = false
+watch(anyDialogOpen, async (open) => {
+  if (open) {
+    if (videoStatus.value === 'playing') {
+      videoPausedForDialog = true
+      await stopVideo()
+    } else {
+      videoPausedForDialog = false
+    }
+  } else if (videoPausedForDialog) {
+    videoPausedForDialog = false
+    startVideo(resolveCameraDeviceId('车顶相机'))
+  }
 })
 </script>
 
@@ -591,7 +648,6 @@ onUnmounted(() => {
             <button type="button" class="header-icon-btn header-icon-swap" title="切换视角">
               <img src="/assets/img/a_leftright.png" alt="" />
             </button>
-            <PreviewButton label="预览" />
           </div>
           <EyeWidget large placeholder="车身影像" />
         </div>
@@ -634,7 +690,6 @@ onUnmounted(() => {
             </div>
             <PreviewButton label="删除" title="不合格透视图删除" @click="onTransDelClick" />
             <PreviewButton label="渲染" />
-            <PreviewButton label="预览" />
           </div>
           <EyeWidget large placeholder="透视影像" :image-url="transparentImageUrl || undefined" />
         </div>
@@ -660,8 +715,10 @@ onUnmounted(() => {
               <img src="/assets/img/good_save.png" alt="" />
             </button>
           </div>
-          <div class="video-area">
-            <span class="video-placeholder">实时视频</span>
+          <div class="video-area" ref="videoStageRef">
+            <div v-if="showVideoHint" class="video-status" :class="{ err: videoStatus === 'error' }">
+              {{ videoHint }}
+            </div>
           </div>
         </div>
 
@@ -917,6 +974,19 @@ onUnmounted(() => {
       @yes="stopErrorVisible = false"
       @close="stopErrorVisible = false"
     />
+
+    <!-- 实时视频：全屏透明 iframe 承载海康插件，必须 Teleport 到 body 避开 ScreenScaler -->
+    <Teleport to="body">
+      <iframe
+        v-if="videoIframeSrc"
+        ref="videoIframeRef"
+        class="hik-iframe-fs dashboard-video-iframe"
+        :src="videoIframeSrc"
+        title="车顶相机实时视频"
+        allow="fullscreen"
+        @load="onVideoIframeLoad"
+      />
+    </Teleport>
   </div>
 </template>
 
@@ -1160,15 +1230,38 @@ onUnmounted(() => {
 .video-area {
   flex: 1;
   min-height: 200px;
-  background: #fff;
+  background: #1a1a1a;
   border-bottom: 2px solid $border-color;
   border-radius: 0 0 12px 12px;
   display: flex;
   align-items: center;
   justify-content: center;
+  position: relative;
 }
 
-.video-placeholder { font-size: 28px; color: $text-placeholder; }
+.video-status {
+  font-size: 16px;
+  color: #999;
+  user-select: none;
+
+  &.err {
+    color: #c0392b;
+  }
+}
+
+/* Dashboard 实时视频 iframe — 略低于弹窗 iframe（10001），避免遮挡采集弹窗 */
+.dashboard-video-iframe {
+  position: fixed;
+  inset: 0;
+  width: 100vw;
+  height: 100vh;
+  border: 0;
+  margin: 0;
+  padding: 0;
+  background: transparent;
+  pointer-events: none;
+  z-index: 9999;
+}
 
 .capture-grid {
   display: grid;
