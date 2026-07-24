@@ -3,11 +3,14 @@
  * 预约处理 — 1:1 对齐 Qt OrderDialog.ui / OrderDialog.cpp
  * 背景渐变穿透无边框预览区；红线仅在左侧雷达区可拖动
  */
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import ConfirmDialog from './components/ConfirmDialog.vue'
 import RadarImagePanel from './components/RadarImagePanel.vue'
 import SlipToggle from './components/SlipToggle.vue'
 import { useBookingDialog } from './composables/useBookingDialog'
 import type { BookingAcceptPayload } from './types'
+import { useHikvisionPlayer } from '@/composables/useHikvisionPlayer'
+import { resolveCameraDeviceId } from '@/config/hikvision'
 
 const emit = defineEmits<{
   close: []
@@ -38,6 +41,23 @@ const {
   confirmYes,
 } = useBookingDialog()
 
+// ---- 视频对讲区域：对接球机 camera1 ----
+const videoStageRef = ref<HTMLElement | null>(null)
+const {
+  status: videoStatus,
+  statusText: videoStatusText,
+  iframeRef: videoIframeRef,
+  iframeSrc: videoIframeSrc,
+  start: startVideo,
+  stop: stopVideo,
+  onIframeLoad: onVideoIframeLoad,
+  postLayout,
+} = useHikvisionPlayer(videoStageRef)
+
+const videoHint = computed(() => videoStatusText.value || '视频对讲区域')
+const showVideoHint = computed(() => videoStatus.value !== 'playing')
+let videoStarted = false
+
 async function handleConfirmYes() {
   try {
     const result = await confirmYes()
@@ -67,6 +87,30 @@ function onAcceptClick() {
   if (submitting.value) return
   requestConfirm('accept')
 }
+
+onMounted(async () => {
+  await nextTick()
+  await new Promise<void>((r) => requestAnimationFrame(() => r()))
+  startVideo(resolveCameraDeviceId('球机'))
+  videoStarted = true
+  window.setTimeout(() => postLayout(true), 300)
+})
+
+/** 内部确认框弹起时暂停视频，避免海康原生窗口遮挡确认弹窗 */
+watch(confirmVisible, async (visible) => {
+  if (visible) {
+    if (videoStatus.value === 'playing') {
+      await stopVideo()
+    }
+  } else if (videoStarted) {
+    startVideo(resolveCameraDeviceId('球机'))
+    window.setTimeout(() => postLayout(true), 300)
+  }
+})
+
+onBeforeUnmount(() => {
+  if (videoStarted) void stopVideo()
+})
 </script>
 
 <template>
@@ -84,13 +128,18 @@ function onAcceptClick() {
           always-show-line
         />
         <div class="video-panel">
+          <div ref="videoStageRef" class="video-stage">
+            <!-- 黑区仅作锚点；实际插件在全屏透明 iframe 内按屏幕坐标定位 -->
+          </div>
+          <div v-if="showVideoHint" class="video-status" :class="{ err: videoStatus === 'error' }">
+            {{ videoHint }}
+          </div>
           <img
             v-if="videoStreamUrl"
             :src="videoStreamUrl"
             class="video-stream"
             alt="视频对讲"
           />
-          <span v-else class="video-placeholder">视频对讲区域</span>
         </div>
       </div>
 
@@ -170,6 +219,19 @@ function onAcceptClick() {
       @confirm="handleConfirmYes"
       @cancel="cancelConfirm"
     />
+
+    <!-- 全屏透明 iframe 承载海康插件，必须 Teleport 到 body 避开 Vue transform -->
+    <Teleport to="body">
+      <iframe
+        v-if="videoIframeSrc"
+        ref="videoIframeRef"
+        class="hik-iframe-fs"
+        :src="videoIframeSrc"
+        title="预约视频对讲"
+        allow="fullscreen"
+        @load="onVideoIframeLoad"
+      />
+    </Teleport>
   </div>
 </template>
 
@@ -246,17 +308,53 @@ function onAcceptClick() {
   align-items: center;
   justify-content: center;
   overflow: hidden;
+  position: relative;
+}
+
+.video-stage {
+  position: absolute;
+  inset: 0;
+  background: transparent;
 }
 
 .video-stream {
+  position: absolute;
+  inset: 0;
   width: 100%;
   height: 100%;
   object-fit: contain;
 }
 
+.video-status {
+  position: relative;
+  z-index: 1;
+  color: #999;
+  font-size: 16px;
+  user-select: none;
+  pointer-events: none;
+
+  &.err {
+    color: #c0392b;
+  }
+}
+
 .video-placeholder {
   color: #666;
   font-size: 16px;
+}
+
+/* 全屏透明 iframe：内部 #divPlugin 用父页下发的视频区屏幕坐标定位 */
+.hik-iframe-fs {
+  position: fixed;
+  inset: 0;
+  width: 100vw;
+  height: 100vh;
+  border: 0;
+  margin: 0;
+  padding: 0;
+  background: transparent;
+  pointer-events: none;
+  z-index: 1000;
 }
 
 .tool-row {
