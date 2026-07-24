@@ -1,8 +1,6 @@
 import { onMounted, onUnmounted, ref, shallowRef, type Ref } from 'vue'
 import { getDevicePreviewConfigApi, type DevicePreviewConfig } from '@/api/device'
-
-/** 与 devices.device_id 对齐；四路 Tab 初版共用同一物理摄像头 */
-const DEFAULT_PREVIEW_DEVICE_ID = 'camera1'
+import { DEFAULT_GUN_DEVICE_ID } from '@/config/hikvision'
 
 export type HikPlayerStatus = 'idle' | 'loading' | 'ready' | 'playing' | 'error'
 
@@ -14,6 +12,7 @@ export type HikLayoutRect = {
 }
 
 const PLAYER_URL = '/hikvision/player.html'
+const DEFAULT_PTZ_SPEED = 4
 
 function rectChanged(a: HikLayoutRect | null, b: HikLayoutRect): boolean {
   if (!a) return true
@@ -34,13 +33,17 @@ export function useHikvisionPlayer(anchorRef: Ref<HTMLElement | null>) {
   const statusText = ref('实时摄像头画面区域')
   const iframeRef = shallowRef<HTMLIFrameElement | null>(null)
   const iframeSrc = ref('')
+  /** 当前预览对应的 devices.device_id */
+  const currentDeviceId = ref(DEFAULT_GUN_DEVICE_ID)
 
+  let pendingDeviceId = DEFAULT_GUN_DEVICE_ID
   let startAfterReady = false
   let startSent = false
   let lastSentLayout: HikLayoutRect | null = null
   let stopWaiters: Array<() => void> = []
   let captureWaiters: Array<(r: { ok: boolean; dataUrl?: string; message?: string }) => void> =
     []
+  let ptzAutoOn = false
 
   function postToIframe(msg: Record<string, unknown>) {
     const win = iframeRef.value?.contentWindow
@@ -125,12 +128,13 @@ export function useHikvisionPlayer(anchorRef: Ref<HTMLElement | null>) {
   }
 
   async function sendStart() {
+    const deviceId = pendingDeviceId
     status.value = 'loading'
     statusText.value = '正在加载摄像头配置…'
 
     let cfg: DevicePreviewConfig
     try {
-      const res = await getDevicePreviewConfigApi(DEFAULT_PREVIEW_DEVICE_ID)
+      const res = await getDevicePreviewConfigApi(deviceId)
       if (res.code !== 0 || !res.data?.ip) {
         throw new Error(res.message || '获取摄像头配置失败')
       }
@@ -141,6 +145,10 @@ export function useHikvisionPlayer(anchorRef: Ref<HTMLElement | null>) {
       return
     }
 
+    // 切设备过程中若已改成别的 deviceId，丢弃过期结果
+    if (deviceId !== pendingDeviceId) return
+
+    currentDeviceId.value = deviceId
     statusText.value = '正在连接摄像头…'
     postLayout(true)
     postToIframe({
@@ -167,7 +175,10 @@ export function useHikvisionPlayer(anchorRef: Ref<HTMLElement | null>) {
     }, 50)
   }
 
-  function start() {
+  function start(deviceId = DEFAULT_GUN_DEVICE_ID) {
+    pendingDeviceId = deviceId
+    currentDeviceId.value = deviceId
+    ptzAutoOn = false
     startSent = false
     startAfterReady = true
     lastSentLayout = null
@@ -180,6 +191,7 @@ export function useHikvisionPlayer(anchorRef: Ref<HTMLElement | null>) {
 
   function stop(): Promise<void> {
     return new Promise((resolve) => {
+      ptzAutoOn = false
       if (!iframeRef.value || !iframeSrc.value) {
         status.value = 'idle'
         statusText.value = '实时摄像头画面区域'
@@ -193,6 +205,8 @@ export function useHikvisionPlayer(anchorRef: Ref<HTMLElement | null>) {
         done = true
         iframeSrc.value = ''
         lastSentLayout = null
+        startSent = false
+        startAfterReady = false
         status.value = 'idle'
         statusText.value = '实时摄像头画面区域'
         resolve()
@@ -225,8 +239,32 @@ export function useHikvisionPlayer(anchorRef: Ref<HTMLElement | null>) {
     })
   }
 
+  /** 海康：1上 2下 3左 4右 5左上 6左下 7右上 8右下 9自动 10变焦+ 11变焦- */
+  function ptzStart(index: number, speed = DEFAULT_PTZ_SPEED) {
+    if (status.value !== 'playing') return
+    if (index === 9) {
+      // 自动：已开则用 speed=0 关闭
+      if (ptzAutoOn) {
+        postToIframe({ type: 'hik-ptz', index: 9, stop: false, speed: 0 })
+        ptzAutoOn = false
+        return
+      }
+      postToIframe({ type: 'hik-ptz', index: 9, stop: false, speed })
+      ptzAutoOn = true
+      return
+    }
+    ptzAutoOn = false
+    postToIframe({ type: 'hik-ptz', index, stop: false, speed })
+  }
+
+  function ptzStop(index?: number) {
+    if (status.value !== 'playing') return
+    // 方向停止：对齐官方 demo 用 index=1 + stop；变焦停止用 11
+    const stopIndex = index === 10 || index === 11 ? 11 : 1
+    postToIframe({ type: 'hik-ptz', index: stopIndex, stop: true, speed: DEFAULT_PTZ_SPEED })
+  }
+
   function onWinResize() {
-    // 窗口变化才同步；播放中不做定时轮询
     postLayout(false)
   }
 
@@ -245,10 +283,13 @@ export function useHikvisionPlayer(anchorRef: Ref<HTMLElement | null>) {
     statusText,
     iframeRef,
     iframeSrc,
+    currentDeviceId,
     start,
     stop,
     onIframeLoad,
     captureJpegDataUrl,
     postLayout,
+    ptzStart,
+    ptzStop,
   }
 }

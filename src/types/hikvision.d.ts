@@ -67,6 +67,16 @@ interface WebVideoCtrlStatic {
       error?: (oError?: { errorCode?: number; errorMsg?: string }) => void
     },
   ): void
+  /** PTZ：iPTZIndex 1-9 方向/自动，10/11 变焦；bStop 为 true 时停止 */
+  I_PTZControl?(
+    iPTZIndex: number,
+    bStop: boolean,
+    options?: {
+      iPTZSpeed?: number
+      success?: () => void
+      error?: (oError?: { errorCode?: number; errorMsg?: string }) => void
+    },
+  ): void
 }
 
 interface Window {

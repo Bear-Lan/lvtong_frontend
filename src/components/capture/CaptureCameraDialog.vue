@@ -6,7 +6,11 @@
  * - 货物/证据才有「图片数量」+「选中删除」（GetGoods/Evidence）；车头/尾/顶无
  */
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import { HIK_DISABLED_CAMERAS, HIK_ENABLED_CAMERAS } from '@/config/hikvision'
+import {
+  HIK_DISABLED_CAMERAS,
+  HIK_ENABLED_CAMERAS,
+  resolveCameraDeviceId,
+} from '@/config/hikvision'
 import { useHikvisionPlayer } from '@/composables/useHikvisionPlayer'
 
 export type CaptureKind = 'head' | 'tail' | 'top' | 'goods' | 'evidence'
@@ -29,7 +33,7 @@ const TITLE_MAP: Record<CaptureKind, string> = {
   evidence: '证据照',
 }
 
-/** 初版球机未接入：货物/证据默认落在已接入的车头相机 */
+/** 打开弹窗时默认选中的相机 Tab（货物/证据仍默认车头） */
 const DEFAULT_CAMERA: Record<CaptureKind, string> = {
   head: '车头相机',
   tail: '车尾相机',
@@ -54,9 +58,9 @@ const thumbW = computed(() => (isMulti.value ? 110 : 200))
 const thumbH = 110
 
 const activeCamera = ref(DEFAULT_CAMERA[props.kind])
-const talking = ref(false)
-/** 对齐 switchToCamera：仅球机显示云台（初版球机 Tab 已禁用，通常不会显示） */
+/** 对齐 switchToCamera：仅球机显示云台 */
 const showPtz = computed(() => activeCamera.value === '球机')
+const switchingCamera = ref(false)
 
 const photos = ref<string[]>([])
 const selectedIndex = ref(0)
@@ -71,11 +75,14 @@ const {
   statusText: hikStatusText,
   iframeRef,
   iframeSrc,
+  currentDeviceId,
   start: startHik,
   stop: stopHik,
   onIframeLoad,
   captureJpegDataUrl,
   postLayout,
+  ptzStart,
+  ptzStop,
 } = useHikvisionPlayer(liveStageRef)
 
 const liveHint = computed(() => hikStatusText.value || '实时摄像头画面区域')
@@ -100,7 +107,6 @@ function syncKind() {
   activeCamera.value = DEFAULT_CAMERA[props.kind]
   photos.value = [...(props.initialImages ?? [])].filter(Boolean)
   selectedIndex.value = 0
-  talking.value = false
 }
 
 watch(() => props.kind, syncKind)
@@ -116,7 +122,7 @@ onMounted(async () => {
   syncKind()
   await nextTick()
   await new Promise<void>((r) => requestAnimationFrame(() => r()))
-  startHik()
+  startHik(resolveCameraDeviceId(activeCamera.value))
   // 布局稳定后强制下发一次坐标（仅一次，避免轮询导致黑闪）
   window.setTimeout(() => postLayout(true), 300)
 })
@@ -125,9 +131,55 @@ onBeforeUnmount(() => {
   void stopHik()
 })
 
-function selectCamera(name: string) {
-  if (isCameraDisabled(name)) return
+async function selectCamera(name: string) {
+  if (isCameraDisabled(name) || switchingCamera.value || closing.value) return
+  if (name === activeCamera.value) return
+
+  const nextId = resolveCameraDeviceId(name)
+  const prevId = currentDeviceId.value
   activeCamera.value = name
+
+  // 同一物理设备（如四路枪机共用 camera2）只改高亮
+  if (nextId === prevId) return
+
+  switchingCamera.value = true
+  try {
+    await stopHik()
+    await nextTick()
+    startHik(nextId)
+    window.setTimeout(() => postLayout(true), 300)
+  } finally {
+    switchingCamera.value = false
+  }
+}
+
+/** 海康 PTZ 索引：↖5 ↑1 ↗7 ←3 ↻9 →4 ↙6 ↓2 ↘8 −11 +10 */
+function onPtzPointerDown(ev: PointerEvent, index: number) {
+  if (!showPtz.value || hikStatus.value !== 'playing') return
+  const el = ev.currentTarget as HTMLElement
+  try {
+    el.setPointerCapture(ev.pointerId)
+  } catch {
+    /* ignore */
+  }
+  if (index === 9) {
+    ptzStart(9)
+    return
+  }
+  ptzStart(index)
+}
+
+function onPtzPointerUp(ev: PointerEvent, index: number) {
+  if (!showPtz.value) return
+  const el = ev.currentTarget as HTMLElement
+  try {
+    if (el.hasPointerCapture(ev.pointerId)) el.releasePointerCapture(ev.pointerId)
+  } catch {
+    /* ignore */
+  }
+  // 自动为点击切换，不在 pointerup 停
+  if (index === 9) return
+  ptzStop(index)
 }
 
 function pushPhoto(url: string) {
@@ -208,10 +260,6 @@ async function onClose() {
 function openPreview() {
   if (selectedSrc.value) window.open(selectedSrc.value, '_blank')
 }
-
-function toggleTalk() {
-  talking.value = !talking.value
-}
 </script>
 
 <template>
@@ -270,9 +318,8 @@ function toggleTalk() {
               :key="cam"
               type="button"
               class="cam-tab"
-              :class="{ on: activeCamera === cam, disabled: isCameraDisabled(cam) }"
-              :title="isCameraDisabled(cam) ? '球机下一阶段接入' : ''"
-              :disabled="isCameraDisabled(cam)"
+              :class="{ on: activeCamera === cam, disabled: isCameraDisabled(cam) || switchingCamera }"
+              :disabled="isCameraDisabled(cam) || switchingCamera"
               @click="selectCamera(cam)"
             >
               {{ cam }}
@@ -295,29 +342,108 @@ function toggleTalk() {
               <div class="ptz-title">360°球机操作云台</div>
               <div class="ptz-body">
                 <div class="ptz-dirs">
-                  <button type="button" class="ptz-btn">↖</button>
-                  <button type="button" class="ptz-btn">↑</button>
-                  <button type="button" class="ptz-btn">↗</button>
-                  <button type="button" class="ptz-btn">←</button>
-                  <button type="button" class="ptz-btn">↻</button>
-                  <button type="button" class="ptz-btn">→</button>
-                  <button type="button" class="ptz-btn">↙</button>
-                  <button type="button" class="ptz-btn">↓</button>
-                  <button type="button" class="ptz-btn">↘</button>
-                  <button type="button" class="ptz-btn">−</button>
+                  <button
+                    type="button"
+                    class="ptz-btn"
+                    @pointerdown.prevent="onPtzPointerDown($event, 5)"
+                    @pointerup.prevent="onPtzPointerUp($event, 5)"
+                    @pointercancel="onPtzPointerUp($event, 5)"
+                  >
+                    ↖
+                  </button>
+                  <button
+                    type="button"
+                    class="ptz-btn"
+                    @pointerdown.prevent="onPtzPointerDown($event, 1)"
+                    @pointerup.prevent="onPtzPointerUp($event, 1)"
+                    @pointercancel="onPtzPointerUp($event, 1)"
+                  >
+                    ↑
+                  </button>
+                  <button
+                    type="button"
+                    class="ptz-btn"
+                    @pointerdown.prevent="onPtzPointerDown($event, 7)"
+                    @pointerup.prevent="onPtzPointerUp($event, 7)"
+                    @pointercancel="onPtzPointerUp($event, 7)"
+                  >
+                    ↗
+                  </button>
+                  <button
+                    type="button"
+                    class="ptz-btn"
+                    @pointerdown.prevent="onPtzPointerDown($event, 3)"
+                    @pointerup.prevent="onPtzPointerUp($event, 3)"
+                    @pointercancel="onPtzPointerUp($event, 3)"
+                  >
+                    ←
+                  </button>
+                  <button
+                    type="button"
+                    class="ptz-btn"
+                    title="自动巡航"
+                    @click.prevent="ptzStart(9)"
+                  >
+                    ↻
+                  </button>
+                  <button
+                    type="button"
+                    class="ptz-btn"
+                    @pointerdown.prevent="onPtzPointerDown($event, 4)"
+                    @pointerup.prevent="onPtzPointerUp($event, 4)"
+                    @pointercancel="onPtzPointerUp($event, 4)"
+                  >
+                    →
+                  </button>
+                  <button
+                    type="button"
+                    class="ptz-btn"
+                    @pointerdown.prevent="onPtzPointerDown($event, 6)"
+                    @pointerup.prevent="onPtzPointerUp($event, 6)"
+                    @pointercancel="onPtzPointerUp($event, 6)"
+                  >
+                    ↙
+                  </button>
+                  <button
+                    type="button"
+                    class="ptz-btn"
+                    @pointerdown.prevent="onPtzPointerDown($event, 2)"
+                    @pointerup.prevent="onPtzPointerUp($event, 2)"
+                    @pointercancel="onPtzPointerUp($event, 2)"
+                  >
+                    ↓
+                  </button>
+                  <button
+                    type="button"
+                    class="ptz-btn"
+                    @pointerdown.prevent="onPtzPointerDown($event, 8)"
+                    @pointerup.prevent="onPtzPointerUp($event, 8)"
+                    @pointercancel="onPtzPointerUp($event, 8)"
+                  >
+                    ↘
+                  </button>
+                  <button
+                    type="button"
+                    class="ptz-btn"
+                    @pointerdown.prevent="onPtzPointerDown($event, 11)"
+                    @pointerup.prevent="onPtzPointerUp($event, 11)"
+                    @pointercancel="onPtzPointerUp($event, 11)"
+                  >
+                    −
+                  </button>
                   <span class="ptz-lab">焦距</span>
-                  <button type="button" class="ptz-btn">+</button>
+                  <button
+                    type="button"
+                    class="ptz-btn"
+                    @pointerdown.prevent="onPtzPointerDown($event, 10)"
+                    @pointerup.prevent="onPtzPointerUp($event, 10)"
+                    @pointercancel="onPtzPointerUp($event, 10)"
+                  >
+                    +
+                  </button>
                 </div>
-                <button
-                  type="button"
-                  class="ptz-talk"
-                  :title="talking ? '结束对讲' : '开始对讲'"
-                  @click="toggleTalk"
-                >
-                  <img
-                    :src="talking ? '/assets/img/a_talkstop.png' : '/assets/img/a_talkstart.png'"
-                    alt="对讲"
-                  />
+                <button type="button" class="ptz-talk" disabled title="对讲稍后接入">
+                  <img src="/assets/img/a_talkstart.png" alt="对讲" />
                 </button>
               </div>
             </div>
@@ -751,6 +877,11 @@ function toggleTalk() {
   align-items: center;
   justify-content: center;
   box-sizing: border-box;
+
+  &:disabled {
+    cursor: not-allowed;
+    opacity: 0.45;
+  }
 
   img {
     width: 70%;

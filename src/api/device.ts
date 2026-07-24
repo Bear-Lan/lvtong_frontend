@@ -19,7 +19,7 @@ export interface DevicePreviewConfig {
  * 读取摄像头 Web 预览配置
  * GET /api/device/<deviceId>/preview-config
  */
-export function getDevicePreviewConfigApi(deviceId = 'camera1') {
+export function getDevicePreviewConfigApi(deviceId: string) {
   return request<DevicePreviewConfig>(
     `/device/${encodeURIComponent(deviceId)}/preview-config`,
   )

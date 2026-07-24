@@ -9,6 +9,9 @@
   var g_busy = false
   var g_layout = null
   var g_layoutWaiters = []
+  var g_analogInfoReady = false
+  /** 当前预览通道，供云台 ISAPI 使用 */
+  var g_playChannelId = 1
 
   function post(msg) {
     try {
@@ -206,12 +209,46 @@
       try {
         WebVideoCtrl.I_GetDigitalChannelInfo(g_deviceIdentify, {
           success: function (xmlDoc) {
-            var id = parseInt($(xmlDoc).find('InputProxyChannelStatus').eq(0).find('id').eq(0).text(), 10)
+            var id = parseInt(
+              $(xmlDoc).find('InputProxyChannelStatus').eq(0).find('id').eq(0).text(),
+              10,
+            )
             if (id > 0) done(id)
           },
           error: function () {},
         })
       } catch (e) {}
+    })
+  }
+
+  /**
+   * 登录后必须拉一次模拟通道信息，写入 iAnalogChannelNum。
+   * 否则该值保持 0，云台会走 PTZCtrlProxy（NVR 数字通道）地址，
+   * 独立 IPC/球机上会返回 HTTP 403，表现为云台无反应。
+   */
+  function ensureAnalogChannelInfo() {
+    if (g_analogInfoReady) return Promise.resolve()
+    return new Promise(function (resolve) {
+      var settled = false
+      function done() {
+        if (settled) return
+        settled = true
+        g_analogInfoReady = true
+        resolve()
+      }
+      setTimeout(done, 2000)
+      try {
+        WebVideoCtrl.I_GetAnalogChannelInfo(g_deviceIdentify, {
+          success: function () {
+            done()
+          },
+          error: function () {
+            done()
+          },
+        })
+      } catch (e) {
+        done()
+      }
     })
   }
 
@@ -263,6 +300,8 @@
         g_playing = false
         g_inited = false
         g_deviceIdentify = ''
+        g_analogInfoReady = false
+        g_playChannelId = 1
         try {
           var el = document.getElementById('divPlugin')
           if (el) el.innerHTML = ''
@@ -327,6 +366,7 @@
   async function handleStart(cfg) {
     if (g_busy) return
     g_busy = true
+    g_analogInfoReady = false
     try {
       status('正在定位预览区域…', 'loading')
       await waitForLayout(4000)
@@ -340,16 +380,19 @@
       status('正在登录设备…', 'loading')
       await login(cfg)
 
+      // 无论 config 是否带 channelId，都要先拉模拟通道以填充 iAnalogChannelNum
       status('正在获取通道…', 'loading')
+      await ensureAnalogChannelInfo()
       await new Promise(function (r) {
-        setTimeout(r, 1000)
+        setTimeout(r, 300)
       })
       var channelId = cfg.channelId || (await getFirstChannelId())
-      status('正在开启预览(通道' + channelId + ')…', 'loading')
+      g_playChannelId = channelId > 0 ? channelId : 1
+      status('正在开启预览(通道' + g_playChannelId + ')…', 'loading')
       await new Promise(function (r) {
-        setTimeout(r, 500)
+        setTimeout(r, 300)
       })
-      await startPlay(channelId, cfg.streamType || 1)
+      await startPlay(g_playChannelId, cfg.streamType || 1)
       status('预览中', 'playing')
       post({ type: 'hik-playing' })
     } catch (e) {
@@ -379,6 +422,184 @@
     }
   }
 
+  /**
+   * 云台：不走 I_PTZControl（其在 iAnalogChannelNum=0 时会误用 NVR Proxy 地址导致 403）。
+   * 直接对 IPC 常用模拟通道 ISAPI 发 PUT；失败再试数字通道代理。
+   * 热路径禁止 await，避免按下后还在等通道探测、松开停止已先发出。
+   *
+   * index: 1上 2下 3左 4右 5左上 6左下 7右上 8右下 9自动 10变焦+ 11变焦-
+   */
+  function formatPtzError(oError) {
+    if (!oError) return '云台控制失败'
+    var code = oError.errorCode
+    var msg = oError.errorMsg
+    if (msg && typeof msg === 'object') {
+      try {
+        var statusString = ''
+        var subStatus = ''
+        if (window.$ && msg.nodeType) {
+          statusString = $(msg).find('statusString').eq(0).text() || ''
+          subStatus = $(msg).find('subStatusCode').eq(0).text() || ''
+        }
+        if (statusString) {
+          return (
+            '云台失败 ' +
+            code +
+            ': ' +
+            statusString +
+            (subStatus ? ' (' + subStatus + ')' : '')
+          )
+        }
+      } catch (e) {}
+      return '云台控制失败 (' + code + ')'
+    }
+    if (typeof msg === 'string' && msg && msg !== 'document') {
+      return '云台失败 ' + code + ': ' + msg
+    }
+    return '云台控制失败 (' + (code || '?') + ')'
+  }
+
+  function ptzSpeedValue(speed, stop) {
+    if (stop) return 0
+    var s = typeof speed === 'number' ? speed : 4
+    return s < 7 ? s * 15 : 100
+  }
+
+  function buildPtzBody(index, speed, stop) {
+    var v = ptzSpeedValue(speed, stop)
+    // 与 SDK ptzControl 方向表一致
+    var dir = [
+      null,
+      { pan: 0, tilt: v },
+      { pan: 0, tilt: -v },
+      { pan: -v, tilt: 0 },
+      { pan: v, tilt: 0 },
+      { pan: -v, tilt: v },
+      { pan: -v, tilt: -v },
+      { pan: v, tilt: v },
+      { pan: v, tilt: -v },
+    ]
+    if (index >= 1 && index <= 8) {
+      return (
+        "<?xml version='1.0' encoding='UTF-8'?>" +
+        '<PTZData><pan>' +
+        dir[index].pan +
+        '</pan><tilt>' +
+        dir[index].tilt +
+        '</tilt></PTZData>'
+      )
+    }
+    if (index === 10 || index === 11) {
+      var zoom = stop ? 0 : index === 10 ? v : -v
+      return (
+        "<?xml version='1.0' encoding='UTF-8'?>" +
+        '<PTZData><zoom>' +
+        zoom +
+        '</zoom></PTZData>'
+      )
+    }
+    if (index === 9) {
+      return (
+        "<?xml version='1.0' encoding='UTF-8'?>" +
+        '<autoPanData><autoPan>' +
+        v +
+        '</autoPan></autoPanData>'
+      )
+    }
+    return ''
+  }
+
+  function sendHttp(szURI, szData) {
+    return WebVideoCtrl.I_SendHTTPRequest(g_deviceIdentify, szURI, {
+      type: 'PUT',
+      data: szData,
+    })
+  }
+
+  function sendPtzIsapi(index, stop, speed) {
+    var channelId = g_playChannelId || 1
+    var oWndInfo = null
+    try {
+      oWndInfo = WebVideoCtrl.I_GetWindowStatus(g_iWndIndex)
+    } catch (e) {}
+    if (oWndInfo && oWndInfo.iChannelID > 0) {
+      channelId = oWndInfo.iChannelID
+      g_playChannelId = channelId
+    }
+
+    var szData = buildPtzBody(index, speed, stop)
+    if (!szData) {
+      return Promise.reject({ errorCode: 1002, errorMsg: '不支持的云台指令' })
+    }
+
+    var analogUri
+    var digitalUri
+    if (index === 9) {
+      analogUri = 'ISAPI/PTZCtrl/channels/' + channelId + '/autoPan'
+      digitalUri = 'ISAPI/ContentMgmt/PTZCtrlProxy/channels/' + channelId + '/autoPan'
+    } else {
+      analogUri = 'ISAPI/PTZCtrl/channels/' + channelId + '/continuous'
+      digitalUri = 'ISAPI/ContentMgmt/PTZCtrlProxy/channels/' + channelId + '/continuous'
+    }
+
+    // 独立球机优先模拟通道；403 时再试数字通道代理
+    return sendHttp(analogUri, szData).then(
+      function (ok) {
+        return ok
+      },
+      function () {
+        return sendHttp(digitalUri, szData)
+      },
+    )
+  }
+
+  function handlePtz(payload) {
+    var p = payload || {}
+    var index = parseInt(p.index, 10)
+    var stop = !!p.stop
+    var speed = typeof p.speed === 'number' ? p.speed : 4
+    if (!g_deviceIdentify || !index) return
+    if (typeof WebVideoCtrl === 'undefined' || !WebVideoCtrl.I_SendHTTPRequest) {
+      post({ type: 'hik-status', text: '当前插件不支持云台控制', status: 'playing' })
+      return
+    }
+
+    var oWndInfo = null
+    try {
+      oWndInfo = WebVideoCtrl.I_GetWindowStatus(g_iWndIndex)
+    } catch (e) {}
+    if (!oWndInfo) {
+      post({ type: 'hik-status', text: '预览窗口未就绪，无法云台', status: 'playing' })
+      return
+    }
+
+    // 自动巡航：父页用 speed=0 表示关闭
+    if (index === 9 && (stop || speed === 0)) {
+      stop = true
+      speed = 0
+    }
+
+    try {
+      sendPtzIsapi(index, stop, speed).then(
+        function () {},
+        function (oError) {
+          if (stop) return
+          post({
+            type: 'hik-status',
+            text: formatPtzError(oError),
+            status: 'playing',
+          })
+        },
+      )
+    } catch (e) {
+      post({
+        type: 'hik-status',
+        text: (e && e.message) || '云台控制异常',
+        status: 'playing',
+      })
+    }
+  }
+
   window.addEventListener('message', function (ev) {
     var data = ev.data
     if (!data || data.target !== 'hik-embed') return
@@ -390,6 +611,8 @@
       handleStop()
     } else if (data.type === 'hik-capture') {
       handleCapture()
+    } else if (data.type === 'hik-ptz') {
+      handlePtz(data)
     }
   })
 
