@@ -7,6 +7,7 @@ import { request } from '@/api/request'
 import AppHeader from '@/components/AppHeader.vue'
 import type { ToolAnchor } from '@/components/AppHeader.vue'
 import EyeWidget from '@/components/EyeWidget.vue'
+import BodyPointCloudPanel from '@/components/BodyPointCloudPanel.vue'
 import PreviewButton from '@/components/PreviewButton.vue'
 import BottomWorkflowPanel from '@/components/BottomWorkflowPanel.vue'
 import type { WorkflowStepKey } from '@/components/WorkflowIcons.vue'
@@ -325,6 +326,18 @@ const stopVideo = async () => { /* noop */ }
 const onVideoIframeLoad = () => { /* noop */ }
 
 const videoHint = computed(() => '实时视频已关闭')
+/** 车顶/车侧画框后的裁切预览（填入右侧「实时视频」固定容器） */
+const liveCropPreviewUrl = ref('')
+const bodyPcPanelRef = ref<{ clearBoxes: () => void } | null>(null)
+
+function onBodyBoxCrop(dataUrl: string) {
+  liveCropPreviewUrl.value = dataUrl
+}
+
+function onDeleteBodyBoxes() {
+  liveCropPreviewUrl.value = ''
+  bodyPcPanelRef.value?.clearBoxes()
+}
 const showVideoHint = computed(() => true)
 
 /** 各格缩略图（blob/url），对齐 Qt setIcon 回写 */
@@ -485,6 +498,7 @@ function doReset() {
   licensePaths.value = { license: '', licenseGc: '' }
   bodyImageUrls.value = { body: '', top: '', side: '' }
   xrayImageUrls.value = { '200': '', '160': '', mosaic: '' }
+  liveCropPreviewUrl.value = ''
   // 清通行码
   passcode.value = null
   // 清工作流状态
@@ -941,12 +955,19 @@ const anyDialogOpen = computed(
             <img src="/assets/img/a_car.png" class="panel-icon" alt="" />
             <span class="panel-title">车身影像</span>
             <span class="header-spacer" aria-hidden="true" />
+            <PreviewButton label="删除框图" title="删除框选图" @click="onDeleteBodyBoxes" />
             <span class="xray-meta">{{ bodyViewLabel }}：</span>
             <button type="button" class="header-icon-btn header-icon-swap" title="切换视角" @click="onBodyViewSwap">
               <img src="/assets/img/a_leftright.png" alt="" />
             </button>
           </div>
-          <EyeWidget large placeholder="车身影像" :image-url="bodyImageUrl || undefined" />
+          <BodyPointCloudPanel
+            ref="bodyPcPanelRef"
+            placeholder="车身影像"
+            :image-url="bodyImageUrl || undefined"
+            :view="bodyView"
+            @crop="onBodyBoxCrop"
+          />
         </div>
 
         <!-- 透视影像 — 灰场/亮场对齐 QDoubleSpinBox / QSpinBox -->
@@ -1016,7 +1037,13 @@ const anyDialogOpen = computed(
             </button>
           </div>
           <div class="video-area">
-            <div class="video-status">
+            <img
+              v-if="liveCropPreviewUrl"
+              :src="liveCropPreviewUrl"
+              class="video-crop-preview"
+              alt="框图预览"
+            />
+            <div v-else class="video-status">
               {{ videoHint }}
             </div>
           </div>
@@ -1550,6 +1577,15 @@ const anyDialogOpen = computed(
   align-items: center;
   justify-content: center;
   position: relative;
+  overflow: hidden;
+}
+
+.video-crop-preview {
+  max-width: 100%;
+  max-height: 100%;
+  width: auto;
+  height: auto;
+  object-fit: contain;
 }
 
 .video-status {
