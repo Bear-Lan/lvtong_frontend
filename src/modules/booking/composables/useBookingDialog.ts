@@ -155,12 +155,12 @@ export function useBookingDialog() {
   }
 
   function buildAcceptPayload(): BookingAcceptPayload {
+    // acceptanceTime 由后端在受理时打点（对齐 Qt QDateTime::currentDateTime()），前端不再生成
     return {
       vehicleHeight: vehicleHeight.value,
       carHeadLength: carHeadLength.value,
       xrayEnabled: xrayEnabled.value,
       linePosition: linePosition.value,
-      acceptanceTime: new Date().toISOString(),
     }
   }
 
@@ -186,6 +186,23 @@ export function useBookingDialog() {
         const payload = buildAcceptPayload()
         await api.acceptBooking(payload)
         bookingStore.applyAccept(payload)
+        // 直接联动 mock_back：受理成功后异步触发出图（不依赖 emit 链路）
+        const base = (import.meta.env.VITE_MOCK_API_BASE_URL as string) || ''
+        const url = `${base}/api/mock/trigger-capture`
+        console.info('[mock_back] confirmYes → trigger-capture:', url)
+        void fetch(url, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            vehicleHeight: payload.vehicleHeight,
+            carHeadLength: payload.carHeadLength,
+            xrayEnabled: payload.xrayEnabled,
+            linePosition: payload.linePosition,
+            acceptanceTime: new Date().toISOString(),
+          }),
+        })
+          .then((r) => console.info('[mock_back] trigger-capture 响应:', r.status))
+          .catch((e) => console.warn('[mock_back] trigger-capture 失败:', e))
         return { kind: 'accept', payload }
       }
 

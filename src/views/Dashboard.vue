@@ -26,8 +26,7 @@ import DrivingLicenseDialog from '@/components/capture/DrivingLicenseDialog.vue'
 import { useBookingStore } from '@/modules/booking'
 import type { BookingAcceptPayload, BookingComingPayload } from '@/modules/booking'
 import { useRouter } from 'vue-router'
-import { useHikvisionPlayer } from '@/composables/useHikvisionPlayer'
-import { resolveCameraDeviceId } from '@/config/hikvision'
+// 实时视频：海康已禁用（避免依赖硬件）
 
 const auth = useAuthStore()
 const wsStore = useWsStore()
@@ -50,6 +49,10 @@ const devicesOnline = ref(false)
 const workflow = ref({
   bookingActive: false,
   distance: 0,
+  /** 对齐 Qt m_checkstep：0 待机 1 预约等待 2 放行中 3 检测中 4 采集完成 6 已离开 */
+  checkStep: 0,
+  /** 当前检测步骤文字提示（来自 WS detection_step message） */
+  stepMessage: '',
 })
 
 /** 弹窗可见：与 Pinia 同步 — 对齐 m_pOrderDialog->show */
@@ -302,19 +305,27 @@ const captureDialog = ref<CaptureKind | null>(null)
 const showLicenseDialog = ref(false)
 
 // ---- 实时视频：车顶相机（camera2）----
-const videoStageRef = ref<HTMLElement | null>(null)
-const {
-  status: videoStatus,
-  statusText: videoStatusText,
-  iframeRef: videoIframeRef,
-  iframeSrc: videoIframeSrc,
-  start: startVideo,
-  stop: stopVideo,
-  onIframeLoad: onVideoIframeLoad,
-} = useHikvisionPlayer(videoStageRef)
+// import { useHikvisionPlayer } from '@/composables/useHikvisionPlayer'
+// import { resolveCameraDeviceId } from '@/config/hikvision'
+// const videoStageRef = ref<HTMLElement | null>(null)
+// const {
+//   status: videoStatus,
+//   statusText: videoStatusText,
+//   iframeRef: videoIframeRef,
+//   iframeSrc: videoIframeSrc,
+//   start: startVideo,
+//   stop: stopVideo,
+//   onIframeLoad: onVideoIframeLoad,
+// } = useHikvisionPlayer(videoStageRef)
+const videoStatus = ref<'idle' | 'loading' | 'ready' | 'playing' | 'error'>('idle')
+const videoIframeRef = ref<HTMLIFrameElement | null>(null)
+const videoIframeSrc = ref('')
+const startVideo = (_deviceId?: string) => { /* noop */ }
+const stopVideo = async () => { /* noop */ }
+const onVideoIframeLoad = () => { /* noop */ }
 
-const videoHint = computed(() => videoStatusText.value || '实时视频')
-const showVideoHint = computed(() => videoStatus.value !== 'playing')
+const videoHint = computed(() => '实时视频已关闭')
+const showVideoHint = computed(() => true)
 
 /** 各格缩略图（blob/url），对齐 Qt setIcon 回写 */
 const captureThumbs = ref<Partial<Record<CaptureKey, string>>>({})
@@ -324,6 +335,33 @@ const captureLists = ref<{ goods: string[]; evidence: string[] }>({
   evidence: [],
 })
 const licensePaths = ref({ license: '', licenseGc: '' })
+
+/** 通行码 14 字段（对齐 Qt PassCodeUtil::GetPassCodeInfoByCodeStr） */
+const passcode = ref<{
+  valid: boolean
+  vehicleId: string
+  vehicleDisplayId: string
+  vehicleColorName: string
+  enStationId: string
+  exStationId: string
+  enWeight: string
+  exWeight: string
+  mediaTypeId: number
+  transactionId: string
+  passId: string
+  exTime: string
+  transPayTypeId: number
+  fee: string
+  payFee: string
+  vehicleSignId: number
+  provinceCount: string
+} | null>(null)
+
+/** 把绝对路径转成 /api/image?path=... URL（前端 <img> 用） */
+function toImageUrl(absPath: string | undefined | null): string {
+  if (!absPath) return ''
+  return `/api/image?path=${encodeURIComponent(absPath)}`
+}
 
 /** 任意弹窗打开时暂停 Dashboard 视频，避免海康原生窗口穿透到弹窗之上 */
 function onCaptureClick(key: CaptureKey) {
@@ -373,6 +411,8 @@ function onWorkflowClick(key: WorkflowStepKey) {
 }
 
 function onBookingAccept(payload: BookingAcceptPayload) {
+  console.info('[mock_back] onBookingAccept CALLED, payload =', payload)
+  // mock_back 触发已在 useBookingDialog.confirmYes 成功后直接调（避免 emit 链路不稳定）
   bookingStore.applyAccept(payload)
   workflow.value.bookingActive = true
 }
@@ -380,6 +420,10 @@ function onBookingAccept(payload: BookingAcceptPayload) {
 function onBookingReject() {
   bookingStore.applyReject()
   workflow.value.bookingActive = false
+  // 联动 mock_back：驳回后场景重置（车回到 distant 状态）
+  void fetch(`${appConfig.mockApiBaseUrl || ''}/api/mock/reject-booking`, {
+    method: 'POST',
+  }).catch((e) => console.warn('[mock_back] reject-booking 失败:', e))
 }
 
 /** WS 来车/按键预约 → 自动弹窗 */
@@ -393,7 +437,31 @@ function handleBookingComing(msg: { data?: BookingComingPayload | Record<string,
 }
 
 // ---- 重置 / 确认 ----
+/** 对齐 LvTongPro::onReset：先弹 QMessageBox 二次确认 */
 function onReset() {
+  showResetConfirmBox.value = true
+}
+
+function onResetConfirmYes() {
+  showResetConfirmBox.value = false
+  doReset()
+  // 通知后端重置（清 _booking_state + 停调度器 + 设备复位）
+  void request('/booking/reset', { method: 'POST' })
+    .then((r) => console.info('[booking] reset 响应:', r.code, r.message))
+    .catch((e) => console.warn('[booking] reset 失败:', e))
+  // 通知 mock_back：复位 + 放行下一车次
+  void fetch(`${appConfig.mockApiBaseUrl || ''}/api/mock/booking-submitted`, {
+    method: 'POST',
+  })
+    .then((r) => console.info('[mock_back] reset 响应:', r.status))
+    .catch((e) => console.warn('[mock_back] reset 失败:', e))
+}
+
+function onResetConfirmNo() {
+  showResetConfirmBox.value = false
+}
+
+function doReset() {
   form.value = {
     plate: '--',
     plateColor: '',
@@ -411,14 +479,45 @@ function onReset() {
     historyCount: '--',
   }
   previousSelection.value = []
+  // 清图片（对齐 Qt clearFormData 清除所有图片缩略图）
+  captureThumbs.value = {}
+  captureLists.value = { goods: [], evidence: [] }
+  licensePaths.value = { license: '', licenseGc: '' }
+  bodyImageUrls.value = { body: '', top: '', side: '' }
+  xrayImageUrls.value = { '200': '', '160': '', mosaic: '' }
+  // 清通行码
+  passcode.value = null
+  // 清工作流状态
+  bookingStore.reset()
+  workflow.value.bookingActive = false
+  workflow.value.checkStep = 0
+  workflow.value.stepMessage = ''
+  workflow.value.btnPrebookTime = ''
+  workflow.value.opengateTime = ''
 }
 
-async function onConfirm() {
+function onConfirm() {
+  /** 对齐 LvTongPro::onConfirmClicked：先弹 ConfirmDialog 二次确认，再写库 */
   if (!form.value.goods) {
     alert('请选择农产品类型')
     return
   }
+  showSubmitConfirmBox.value = true
+}
+
+async function onSubmitConfirmYes() {
+  showSubmitConfirmBox.value = false
+
+  // ---- 1. 解析图片路径：/api/image?path=... → 取绝对路径 ----
+  const toAbsPath = (url: string): string => {
+    if (!url) return ''
+    const m = url.match(/[?&]path=([^&]+)/)
+    return m ? decodeURIComponent(m[1]) : url
+  }
+
+  // ---- 2. 组装 body（50+ 字段，对齐 Qt VehicleInspection） ----
   const body: Record<string, unknown> = {
+    // 业务字段
     plate_number: form.value.plate === '--' ? '' : form.value.plate,
     plate_number_gc: form.value.plateGc === '--' ? '' : form.value.plateGc,
     driver_phone: form.value.phone,
@@ -429,8 +528,57 @@ async function onConfirm() {
     load_rate: parseFloat(form.value.loadRate) || 0,
     load_weight: parseFloat(form.value.weight) || 0,
     vehicle_size: form.value.size,
+    // 8 个图片路径（Qt m_*ImagePath）
+    head_image_path: toAbsPath(captureThumbs.value.head || ''),
+    tail_image_path: toAbsPath(captureThumbs.value.tail || ''),
+    body_image_path: toAbsPath(bodyImageUrls.value.body || ''),
+    top_image_path: toAbsPath(bodyImageUrls.value.top || ''),
+    transparent_image_path: toAbsPath(xrayImageUrls.value['200'] || ''),
+    // 通行码 QR 图（对齐 Qt m_codeImagePath，flask 后端生成）
+    passcode_image_path: toAbsPath(captureThumbs.value.passcode || ''),
+    // 货物图（多张，逗号分隔）
+    goods_image_path: (captureLists.value.goods || []).map(toAbsPath).filter(Boolean).join(','),
+    // 证据照（多张，逗号分隔）
+    evidences_image_path: (captureLists.value.evidence || []).map(toAbsPath).filter(Boolean).join(','),
+    // 行驶证（合并图 + 单图）
+    license_image_path: toAbsPath(licensePaths.value.license || ''),
+    // 操作员
     operator_name: auth.user?.realName || '',
+    inspector_phone: auth.user?.phone || '',
   }
+
+  // ---- 3. 通行码 14 字段（从 passcode ref 读） ----
+  if (passcode.value && passcode.value.valid) {
+    const pc = passcode.value
+    body.passcode_vehicle_id = pc.vehicleId
+    body.passcode_vehicle_display_id = pc.vehicleDisplayId
+    body.passcode_vehicle_color_name = pc.vehicleColorName
+    body.passcode_en_station_id = pc.enStationId
+    body.passcode_ex_station_id = pc.exStationId
+    body.passcode_en_weight = pc.enWeight
+    body.passcode_ex_weight = pc.exWeight
+    body.passcode_media_type = String(pc.mediaTypeId || '')
+    body.passcode_transaction_id = pc.transactionId
+    body.passcode_pass_id = pc.passId
+    body.passcode_ex_time = pc.exTime
+    body.passcode_trans_pay_type = String(pc.transPayTypeId || '')
+    body.passcode_fee = pc.fee
+    body.passcode_pay_fee = pc.payFee
+    body.passcode_vehicle_sign = pc.vehicleSignId ? `0x${pc.vehicleSignId.toString(16).toUpperCase()}` : ''
+    body.passcode_province_count = pc.provinceCount
+  }
+
+  // ---- 4. 7 个时间戳（能从 store / workflow 拿的拿） ----
+  // btn_prebook_time ← 预约时间（Qt PLC booking false→true）
+  if (workflow.value.btnPrebookTime) body.btn_prebook_time = workflow.value.btnPrebookTime
+  // acceptance_time ← 受理时间（flask 已存，前端可读 bookingStore）
+  if (bookingStore.acceptanceTime) body.acceptance_time = bookingStore.acceptanceTime
+  // opengate_time ← 开闸时间（mock_back accepted 推 plc_status green）
+  if (workflow.value.opengateTime) body.opengate_time = workflow.value.opengateTime
+  // cd_photo_time ← 拍车顶时（mock_back 没车顶数据源，留空）
+  // openlightscreen_time / closelightscreen_time ← 设备联动（mock 没模拟，留空）
+  // inspection_time ← 后端 submit 时打（不用前端传）
+
   try {
     const res = await request('/inspection/submit', {
       method: 'POST',
@@ -438,13 +586,25 @@ async function onConfirm() {
     })
     if (res.code === 0) {
       alert('提交成功')
-      onReset()
+      // 提交成功直接重置（不再二次弹重置确认，因为已经走完流程）
+      doReset()
+      // 通知后端重置
+      void request('/booking/reset', { method: 'POST' })
+        .catch((e) => console.warn('[booking] reset 失败:', e))
+      // 通知 mock_back：提交完成，复位 + 放行下一车次
+      void fetch(`${appConfig.mockApiBaseUrl || ''}/api/mock/booking-submitted`, {
+        method: 'POST',
+      }).catch((e) => console.warn('[mock_back] booking-submitted 失败:', e))
     } else {
       alert(res.message || '提交失败')
     }
   } catch (e) {
     alert('提交失败: ' + (e instanceof Error ? e.message : '未知错误'))
   }
+}
+
+function onSubmitConfirmNo() {
+  showSubmitConfirmBox.value = false
 }
 
 // ---- 急停（对齐 LvTongPro::onStopClicked / onPLCStopChanged）----
@@ -454,6 +614,10 @@ const showStopConfirmBox = ref(false)
 const showStopResetBox = ref(false)
 const stopErrorVisible = ref(false)
 const stopErrorMessage = ref('')
+
+// ---- 提交确认 — 对齐 LvTongPro::onConfirmClicked → ConfirmDialog ----
+const showSubmitConfirmBox = ref(false)
+const showResetConfirmBox = ref(false)
 
 // ---- WebSocket 实时数据 ----
 function setupWS() {
@@ -485,7 +649,13 @@ function setupWS() {
   })
 
   wsStore.subscribe('detection_step', (msg) => {
-    console.log('[WS] 检测步骤:', msg.data)
+    const data = msg.data as { step?: number; message?: string } | undefined
+    if (data?.step != null) {
+      workflow.value.checkStep = data.step
+      workflow.value.stepMessage = data.message ?? ''
+      // 对齐 Qt m_checkstep 联动 store
+      bookingStore.checkStep = data.step
+    }
   })
 
   // 对齐 PLC bookingStatus → 弹 OrderDialog
@@ -508,6 +678,112 @@ function setupWS() {
   wsStore.subscribe('booking_rejected', () => {
     bookingStore.applyReject()
     workflow.value.bookingActive = false
+  })
+
+  /** 对齐 LvTongPro::onReset：服务端推送 booking_reset 时兜底重置 */
+  wsStore.subscribe('booking_reset', () => {
+    bookingStore.reset()
+    workflow.value.bookingActive = false
+    workflow.value.checkStep = 0
+    workflow.value.stepMessage = ''
+  })
+
+  /** mock_back 推送：受理后 2s 出图，按 imageType 写入对应视图 */
+  wsStore.subscribe('image_ready', (msg) => {
+    const data = msg.data as
+      | {
+          imageType?: 'body' | 'transparent'
+          group?: number
+          urls?: Record<string, string>
+        }
+      | undefined
+    if (!data?.imageType || !data.urls) return
+    if (data.imageType === 'body') {
+      if (data.urls['1']) bodyImageUrls.value.body = data.urls['1']
+      if (data.urls['2']) bodyImageUrls.value.top = data.urls['2']
+      if (data.urls['3']) bodyImageUrls.value.side = data.urls['3']
+    } else if (data.imageType === 'transparent') {
+      if (data.urls['1']) xrayImageUrls.value['200'] = data.urls['1']
+      if (data.urls['2']) xrayImageUrls.value['160'] = data.urls['2']
+      if (data.urls['3']) xrayImageUrls.value.mosaic = data.urls['3']
+    }
+    console.info(
+      `[mock_back] image_ready: ${data.imageType} group=${data.group} urls=${Object.keys(data.urls).length}`,
+    )
+  })
+
+  /** 移动 app 上传 — 对齐 LvTongPro.cpp:1680-1948 JsonFolderWatcher 回调 */
+  wsStore.subscribe('mobile_upload', (msg) => {
+    const data = msg.data as
+      | {
+          sessionId?: string
+          plate_number_gc?: string
+          phone?: string
+          goods_type?: string
+          head_image_path?: string
+          body_image_path?: string
+          tail_image_path?: string
+          passcode_image_path?: string
+          license_image_path1?: string
+          license_image_path2?: string
+          goods_image_path?: string  // 多个，逗号分隔
+          evidences_image_path?: string
+        }
+      | undefined
+    if (!data) return
+
+    // 13 个图片字段 — 对齐 Qt m_headImagePath / m_tailImagePath / m_bodyPath / m_licenseImagePath1/2 / m_codeImagePath
+    if (data.head_image_path) captureThumbs.value.head = toImageUrl(data.head_image_path)
+    if (data.tail_image_path) captureThumbs.value.tail = toImageUrl(data.tail_image_path)
+    if (data.body_image_path) bodyImageUrls.value.body = toImageUrl(data.body_image_path)
+    // passcode_image_path 是 flask 后端用 QR 库生成的（对齐 Qt QZXing::encodeData）
+    if (data.passcode_image_path) captureThumbs.value.passcode = toImageUrl(data.passcode_image_path)
+    if (data.license_image_path1) licensePaths.value.license = toImageUrl(data.license_image_path1)
+    if (data.license_image_path2) licensePaths.value.licenseGc = toImageUrl(data.license_image_path2)
+
+    // 货物图（多张，append 到列表 — 对齐 Qt getGoodImgListPath()）
+    if (data.goods_image_path) {
+      const urls = data.goods_image_path.split(',').filter(Boolean).map(toImageUrl)
+      captureLists.value.goods = urls
+      captureThumbs.value.goods = urls[0] || ''
+    }
+
+    // 证据照（多张 — 对齐 Qt getEvidenceListPath()）
+    if (data.evidences_image_path) {
+      const urls = data.evidences_image_path.split(',').filter(Boolean).map(toImageUrl)
+      captureLists.value.evidence = urls
+      captureThumbs.value.evidence = urls[0] || ''
+    }
+
+    // 业务字段 — 对齐 Qt ui.lineEdit_phone / ui.lineEdit_plate_gc / ui.lineEdit_goods
+    if (data.phone) form.value.phone = data.phone
+    if (data.plate_number_gc) form.value.plateGc = data.plate_number_gc
+    if (data.goods_type) {
+      form.value.goods = data.goods_type
+      // 对齐 Qt ui.lineEdit_goods->setProperty('productCode', ...)
+      form.value.goodsProductCode = data.goods_type
+    }
+
+    console.info(
+      `[mobile_upload] session=${data.sessionId} plate_gc=${data.plate_number_gc} ` +
+      `phone=${data.phone} head=${!!data.head_image_path} body=${!!data.body_image_path} ` +
+      `license1=${!!data.license_image_path1} license2=${!!data.license_image_path2} ` +
+      `goods=${!!data.goods_image_path} evidences=${!!data.evidences_image_path}`,
+    )
+  })
+
+  /** 通行码 14 字段解析 — 对齐 Qt PassCodeUtil::GetPassCodeInfoByCodeStr */
+  wsStore.subscribe('mobile_passcode', (msg) => {
+    const pc = msg.data as typeof passcode.value
+    if (!pc || !pc.valid) return
+    passcode.value = pc
+    // 对齐 Qt dispVhicleLicQRInfoToMainUI：自动填车牌 + 颜色
+    if (pc.vehicleDisplayId) form.value.plate = pc.vehicleDisplayId
+    if (pc.vehicleColorName) form.value.plateColor = pc.vehicleColorName
+    console.info(
+      `[mobile_passcode] vehicle=${pc.vehicleDisplayId} color=${pc.vehicleColorName} ` +
+      `enSta=${pc.enStationId} exSta=${pc.exStationId} fee=${pc.fee}`,
+    )
   })
 }
 
@@ -620,18 +896,14 @@ onMounted(async () => {
   loadDicts()
   setupWS()
 
-  // 浏览器打开即接上车顶相机视频流
-  await nextTick()
-  await new Promise<void>((r) => requestAnimationFrame(() => r()))
-  startVideo(resolveCameraDeviceId('车顶相机'))
+  // 实时视频已禁用海康连接（不启动 startVideo）
 })
 
 onUnmounted(() => {
   wsStore.disconnect()
-  void stopVideo()
 })
 
-/** 任意弹窗打开时暂停 Dashboard 视频，避免海康原生窗口穿透到弹窗之上 */
+/** 任意弹窗打开时无需处理视频（海康已禁用） */
 const anyDialogOpen = computed(
   () =>
     showBooking.value ||
@@ -649,20 +921,6 @@ const anyDialogOpen = computed(
     stopErrorVisible.value ||
     showTransDelConfirm.value,
 )
-let videoPausedForDialog = false
-watch(anyDialogOpen, async (open) => {
-  if (open) {
-    if (videoStatus.value === 'playing') {
-      videoPausedForDialog = true
-      await stopVideo()
-    } else {
-      videoPausedForDialog = false
-    }
-  } else if (videoPausedForDialog) {
-    videoPausedForDialog = false
-    startVideo(resolveCameraDeviceId('车顶相机'))
-  }
-})
 </script>
 
 <template>
@@ -757,8 +1015,8 @@ watch(anyDialogOpen, async (open) => {
               <img src="/assets/img/good_save.png" alt="" />
             </button>
           </div>
-          <div class="video-area" ref="videoStageRef">
-            <div v-if="showVideoHint" class="video-status" :class="{ err: videoStatus === 'error' }">
+          <div class="video-area">
+            <div class="video-status">
               {{ videoHint }}
             </div>
           </div>
@@ -1007,6 +1265,30 @@ watch(anyDialogOpen, async (open) => {
       @close="onStopResetClose"
     />
 
+    <!-- 提交二次确认 — 对齐 LvTongPro::onConfirmClicked → ConfirmDialog -->
+    <QtMessageBox
+      v-if="showSubmitConfirmBox"
+      title="确认提交"
+      message="确认无误？提交后将清空表单与预约状态。"
+      icon="question"
+      :buttons="['yes', 'no']"
+      @yes="onSubmitConfirmYes"
+      @no="onSubmitConfirmNo"
+      @close="onSubmitConfirmNo"
+    />
+
+    <!-- 重置确认 — 对齐 LvTongPro::onReset：QMessageBox 二次确认 -->
+    <QtMessageBox
+      v-if="showResetConfirmBox"
+      title="重置"
+      message="确定重置录入车辆信息吗？"
+      icon="question"
+      :buttons="['yes', 'no']"
+      @yes="onResetConfirmYes"
+      @no="onResetConfirmNo"
+      @close="onResetConfirmNo"
+    />
+
     <QtMessageBox
       v-if="stopErrorVisible"
       title="系统提醒"
@@ -1017,18 +1299,7 @@ watch(anyDialogOpen, async (open) => {
       @close="stopErrorVisible = false"
     />
 
-    <!-- 实时视频：全屏透明 iframe 承载海康插件，必须 Teleport 到 body 避开 ScreenScaler -->
-    <Teleport to="body">
-      <iframe
-        v-if="videoIframeSrc"
-        ref="videoIframeRef"
-        class="hik-iframe-fs dashboard-video-iframe"
-        :src="videoIframeSrc"
-        title="车顶相机实时视频"
-        allow="fullscreen"
-        @load="onVideoIframeLoad"
-      />
-    </Teleport>
+    <!-- 实时视频：海康已禁用，不渲染 iframe -->
   </div>
 </template>
 
