@@ -26,6 +26,7 @@ import DrivingLicenseDialog from '@/components/capture/DrivingLicenseDialog.vue'
 import { useBookingStore } from '@/modules/booking'
 import type { BookingAcceptPayload, BookingComingPayload } from '@/modules/booking'
 import { useRouter } from 'vue-router'
+import { toApiUrl, toStoragePath, joinImagePaths } from '@/utils/imagePath'
 // 实时视频：海康已禁用（避免依赖硬件）
 
 const auth = useAuthStore()
@@ -357,10 +358,11 @@ const passcode = ref<{
   provinceCount: string
 } | null>(null)
 
-/** 把绝对路径转成 /api/image?path=... URL（前端 <img> 用） */
-function toImageUrl(absPath: string | undefined | null): string {
-  if (!absPath) return ''
-  return `/api/image?path=${encodeURIComponent(absPath)}`
+/** 把任意图片引用转成可显示的 URL（前端 <img> 用）。
+ *  对齐后端 /api/images/<rel> 静态路由；同时兼容旧的绝对路径与 /api/image?path= 形态。
+ */
+function toImageUrl(reference: string | undefined | null): string {
+  return toApiUrl(reference)
 }
 
 /** 任意弹窗打开时暂停 Dashboard 视频，避免海康原生窗口穿透到弹窗之上 */
@@ -508,14 +510,10 @@ function onConfirm() {
 async function onSubmitConfirmYes() {
   showSubmitConfirmBox.value = false
 
-  // ---- 1. 解析图片路径：/api/image?path=... → 取绝对路径 ----
-  const toAbsPath = (url: string): string => {
-    if (!url) return ''
-    const m = url.match(/[?&]path=([^&]+)/)
-    return m ? decodeURIComponent(m[1]) : url
-  }
-
-  // ---- 2. 组装 body（50+ 字段，对齐 Qt VehicleInspection） ----
+  // ---- 1. 组装 body（50+ 字段，对齐 Qt VehicleInspection） ----
+  // 图片统一交给后端 persist_to_storage 归一：前端只负责把"任何形态的引用"
+  // （/api/images/<rel>、/api/image?path=、绝对路径、相对路径）
+  // 转成"后端能识别的字符串"，具体落盘与改名由后端负责。
   const body: Record<string, unknown> = {
     // 业务字段
     plate_number: form.value.plate === '--' ? '' : form.value.plate,
@@ -529,19 +527,20 @@ async function onSubmitConfirmYes() {
     load_weight: parseFloat(form.value.weight) || 0,
     vehicle_size: form.value.size,
     // 8 个图片路径（Qt m_*ImagePath）
-    head_image_path: toAbsPath(captureThumbs.value.head || ''),
-    tail_image_path: toAbsPath(captureThumbs.value.tail || ''),
-    body_image_path: toAbsPath(bodyImageUrls.value.body || ''),
-    top_image_path: toAbsPath(bodyImageUrls.value.top || ''),
-    transparent_image_path: toAbsPath(xrayImageUrls.value['200'] || ''),
+    head_image_path: toStoragePath(captureThumbs.value.head || ''),
+    tail_image_path: toStoragePath(captureThumbs.value.tail || ''),
+    body_image_path: toStoragePath(bodyImageUrls.value.body || ''),
+    top_image_path: toStoragePath(bodyImageUrls.value.top || ''),
+    transparent_image_path: toStoragePath(xrayImageUrls.value['200'] || ''),
     // 通行码 QR 图（对齐 Qt m_codeImagePath，flask 后端生成）
-    passcode_image_path: toAbsPath(captureThumbs.value.passcode || ''),
-    // 货物图（多张，逗号分隔）
-    goods_image_path: (captureLists.value.goods || []).map(toAbsPath).filter(Boolean).join(','),
-    // 证据照（多张，逗号分隔）
-    evidences_image_path: (captureLists.value.evidence || []).map(toAbsPath).filter(Boolean).join(','),
-    // 行驶证（合并图 + 单图）
-    license_image_path: toAbsPath(licensePaths.value.license || ''),
+    passcode_image_path: toStoragePath(captureThumbs.value.passcode || ''),
+    // 货物图（多张，| 分隔；后端 persist_to_storage 会兜底接受 ,）
+    goods_image_path: joinImagePaths(captureLists.value.goods || []),
+    // 证据照（多张，| 分隔）
+    evidences_image_path: joinImagePaths(captureLists.value.evidence || []),
+    // 行驶证（合并图 + GC 牌）
+    license_image_path: toStoragePath(licensePaths.value.license || ''),
+    license_image_path1: toStoragePath(licensePaths.value.licenseGc || ''),
     // 操作员
     operator_name: auth.user?.realName || '',
     inspector_phone: auth.user?.phone || '',
