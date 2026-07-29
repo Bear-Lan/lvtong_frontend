@@ -13,34 +13,56 @@
  *       都被 toApiUrl() 透传 / 切到 /api/images/<rel> 形态。
  */
 
-/** 任意引用 → API URL（用于 <img :src> 显示）。空 → ''。 */
+/** 任意引用 → API URL（用于 <img :src> 显示）。空 → ''。
+ *
+ * 解析顺序：
+ *   1. /api/images/<rel>               → 原样
+ *   2. ?path=<encoded> 形态（老 /api/image 或 mock_back /api/mock/...） →
+ *        - 抽出来的路径落在 IMAGE_STORAGE_ROOT 内（captures/YYYY/...）→ 转 /api/images/<rel>
+ *        - 否则保留原 URL（让老代理 /api/image 兜底显示）
+ *   3. 形似绝对路径（Windows X:/ 或 /unix/... 含盘符/根）→ 转 /api/image?path=<encoded>
+ *        这一兜底很重要：mobile 上传、Qt 时代数据等都会落到这里
+ *   4. http(s)://  /  blob:  /  data:  → 原样（浏览器内嵌资源，无需代理）
+ *   5. 其它（未知）→ 原样返回，绝不静默吞掉
+ */
 export function toApiUrl(reference: string | undefined | null): string {
   if (!reference) return ''
   const s = String(reference).trim()
   if (!s) return ''
 
-  // 已是 /api/images/<rel>
+  // 1. 已是 /api/images/<rel>
   if (s.startsWith('/api/images/')) return s
 
-  // /api/image?path=<encoded> 或 /api/mock/captures/file?path=<encoded>
-  // 旧形态：抽 path，转相对（若落在 IMAGE_STORAGE_ROOT 内）
+  // 2. ?path=<encoded> 形态
   if (s.startsWith('/api/image') || s.includes('?path=')) {
-    const rel = extractRelFromUrl(s)
-    if (rel) return rel.startsWith('/') ? rel : `/api/images/${rel}`
-    return s // 抽不出来，原样返回（保留 query，让旧代理兜底）
+    const abs = extractAbsFromUrl(s)
+    if (abs) {
+      const rel = absToRel(abs)
+      if (rel) return `/api/images/${rel}`
+      // 路径不在 IMAGE_STORAGE_ROOT 下 — 保留原 URL 让老代理 /api/image 兜底
+      return s
+    }
+    return s
   }
 
-  // 绝对路径（在 IMAGE_STORAGE_ROOT 内 → 转 /api/images/<rel>）
-  const rel = absToRel(s)
-  if (rel) return `/api/images/${rel}`
+  // 3. 绝对路径兜底：转 /api/image?path=<encoded>
+  //    覆盖 mobile_upload 推过来的 "D:/soft/FtpLvTong/xxx.jpg" 等
+  if (looksLikeAbsolutePath(s)) {
+    return `/api/image?path=${encodeURIComponent(s)}`
+  }
 
-  // 外部 URL 或相对路径（无根目录迹象）：原样返回
+  // 4. 外链 / blob / data:
+  //    - http(s):// 浏览器直接加载
+  //    - blob: / data: Vue/浏览器内存里资源
+  //    - 这些都不会被 vite proxy 转，原样即可
   return s
 }
 
 /** 任意引用 → "提交时使用的字符串"。
  *  - 优先返回磁盘绝对路径（让后端 persist_to_storage 直接归一）
  *  - 没绝对路径信息时返回原值（后端会兜底处理）
+ *
+ * 注意：这是与 toApiUrl() 的 **逆向行为** —— 显示形态和入库形态必须能互转。
  */
 export function toStoragePath(reference: string | undefined | null): string {
   if (!reference) return ''
@@ -48,15 +70,17 @@ export function toStoragePath(reference: string | undefined | null): string {
   if (!s) return ''
   if (s.startsWith('http://') || s.startsWith('https://')) return s
 
-  // /api/image?path=<encoded>
+  // /api/image?path=<encoded> 或任何 ?path= 形态：抽出绝对路径
   if (s.startsWith('/api/image') || s.includes('?path=')) {
     const abs = extractAbsFromUrl(s)
     if (abs) return abs
     return s
   }
 
-  // /api/images/<rel> 或相对：原样返回（后端 persist_to_storage 会拼 IMAGE_STORAGE_ROOT）
+  // /api/images/<rel>：剥前缀变相对（后端会拼 IMAGE_STORAGE_ROOT）
   if (s.startsWith('/api/images/')) return s.slice('/api/images/'.length)
+
+  // 兜底：原样返回（绝对路径由后端检查/复制）
   return s
 }
 
@@ -69,6 +93,21 @@ export function joinImagePaths(references: (string | undefined | null)[]): strin
 }
 
 // ---- 内部工具 ----
+
+/** 判定字符串"形似磁盘绝对路径"。
+ *  - Windows: `D:\` `D:/` `\\server\`
+ *  - Unix:    `/foo/bar`（要求至少有一段）
+ */
+function looksLikeAbsolutePath(s: string): boolean {
+  if (!s) return false
+  // Windows: drive letter
+  if (/^[A-Za-z]:[\\/]/.test(s)) return true
+  // UNC: \\server\share
+  if (s.startsWith('\\\\') || s.startsWith('//')) return true
+  // Unix-style absolute: /...
+  if (s.startsWith('/') && s.length > 1 && !s.startsWith('/api/')) return true
+  return false
+}
 
 function extractRelFromUrl(url: string): string | null {
   const q = url.indexOf('?')

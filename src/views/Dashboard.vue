@@ -398,6 +398,21 @@ function onXrayBoxCrop(dataUrl: string) {
   liveCropPreviewUrl.value = dataUrl
 }
 
+/** 「勾」：用户确认把当前右侧预览的框图保存到货物图列表。
+ *  - dataUrl 是 base64（来自 BodyPointCloudPanel/@crop），先原样入 captureLists.goods
+ *    让 UI 立即可见；提交时会由 onSubmitConfirmYes 通过 imagePath 工具归一或上传
+ *  - 同步刷新 captureThumbs.goods（最后一张作为缩略图）
+ *  - 顺手清掉预览区，回到正常实时视频占位
+ */
+function onConfirmCropToGoods() {
+  if (!liveCropPreviewUrl.value) return
+  const next = [...(captureLists.value.goods || []), liveCropPreviewUrl.value]
+  captureLists.value = { ...captureLists.value, goods: next }
+  captureThumbs.value = { ...captureThumbs.value, goods: next[next.length - 1] || '' }
+  liveCropPreviewUrl.value = ''
+  console.info('[Dashboard] 框图已保存到货物图:', next.length)
+}
+
 function onDeleteBodyBoxes() {
   liveCropPreviewUrl.value = ''
   bodyPcPanelRef.value?.clearBoxes()
@@ -1120,7 +1135,13 @@ const anyDialogOpen = computed(
           <div class="panel-header">
             <img src="/assets/img/live_video.png" class="panel-icon" alt="" />
             <span class="panel-title">实时视频</span>
-            <button class="header-icon-btn" title="货物图片保存">
+            <button
+              class="header-icon-btn"
+              :class="{ disabled: !liveCropPreviewUrl }"
+              :title="liveCropPreviewUrl ? '保存到货物图' : '当前无裁切预览'"
+              :disabled="!liveCropPreviewUrl"
+              @click="onConfirmCropToGoods"
+            >
               <img src="/assets/img/good_save.png" alt="" />
             </button>
           </div>
