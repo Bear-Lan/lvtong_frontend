@@ -6,7 +6,6 @@ import { request } from '@/api/request'
 
 import AppHeader from '@/components/AppHeader.vue'
 import type { ToolAnchor } from '@/components/AppHeader.vue'
-import EyeWidget from '@/components/EyeWidget.vue'
 import BodyPointCloudPanel from '@/components/BodyPointCloudPanel.vue'
 import PreviewButton from '@/components/PreviewButton.vue'
 import BottomWorkflowPanel from '@/components/BottomWorkflowPanel.vue'
@@ -27,6 +26,7 @@ import DrivingLicenseDialog from '@/components/capture/DrivingLicenseDialog.vue'
 import { useBookingStore } from '@/modules/booking'
 import type { BookingAcceptPayload, BookingComingPayload } from '@/modules/booking'
 import { useRouter } from 'vue-router'
+import { processImage } from '@/utils/imageProcess'
 // 实时视频：海康已禁用（避免依赖硬件）
 
 const auth = useAuthStore()
@@ -86,60 +86,109 @@ async function loadDicts() {
   }
 }
 
-// ---- 透视参数 — 对齐 Qt sb_gammavalue / sb_whitevalue ----
-/** 灰场 QDoubleSpinBox：max=5, step=0.5, 默认 2.00 */
-const gammaValue = ref(2.0)
-const gammaText = ref('2.00')
-/** 亮场 QSpinBox：max=255, step=16, 默认 128 */
-const whiteValue = ref(128)
-const whiteText = ref('128')
+// ---- 透视参数 — 对齐 color_demo：灰场/亮场三档 + 渲染伪彩 ----
+/** 灰场：高 3.00 / 中 2.00 / 低 1.00 */
+const GAMMA_LEVELS = [
+  { key: 'high', label: '高', value: 3.0 },
+  { key: 'mid', label: '中', value: 2.0 },
+  { key: 'low', label: '低', value: 1.0 },
+] as const
+/** 亮场：高 64 / 中 128 / 低 255 */
+const WHITE_LEVELS = [
+  { key: 'high', label: '高', value: 64 },
+  { key: 'mid', label: '中', value: 128 },
+  { key: 'low', label: '低', value: 255 },
+] as const
 
-const GAMMA_MIN = 0
-const GAMMA_MAX = 5
-const GAMMA_STEP = 0.5
-const WHITE_MIN = 0
-const WHITE_MAX = 255
-const WHITE_STEP = 16
+type LevelKey = 'high' | 'mid' | 'low'
+type XrayOpenMenu = 'gamma' | 'white' | null
 
-function clampNum(n: number, min: number, max: number) {
-  return Math.min(max, Math.max(min, n))
+const gammaKey = ref<LevelKey>('mid')
+const whiteKey = ref<LevelKey>('mid')
+const xrayOpenMenu = ref<XrayOpenMenu>(null)
+/** 对齐 btn_pseudoColor：开 = 伪彩 */
+const xrayRenderOn = ref(false)
+/** 色阶/伪彩处理后的显示 URL */
+const xrayDisplayUrl = ref('')
+let xrayApplyTimer: number | undefined
+let xrayApplySeq = 0
+
+const gammaValue = computed(
+  () => GAMMA_LEVELS.find((x) => x.key === gammaKey.value)!.value,
+)
+const whiteValue = computed(
+  () => WHITE_LEVELS.find((x) => x.key === whiteKey.value)!.value,
+)
+const gammaLabel = computed(
+  () => GAMMA_LEVELS.find((x) => x.key === gammaKey.value)!.label,
+)
+const whiteLabel = computed(
+  () => WHITE_LEVELS.find((x) => x.key === whiteKey.value)!.label,
+)
+
+function toggleXrayMenu(menu: XrayOpenMenu) {
+  xrayOpenMenu.value = xrayOpenMenu.value === menu ? null : menu
 }
 
-function syncGamma(n: number) {
-  gammaValue.value = clampNum(n, GAMMA_MIN, GAMMA_MAX)
-  gammaText.value = gammaValue.value.toFixed(2)
+function pickGamma(key: LevelKey) {
+  gammaKey.value = key
+  xrayOpenMenu.value = null
 }
 
-function syncWhite(n: number) {
-  whiteValue.value = clampNum(Math.round(n), WHITE_MIN, WHITE_MAX)
-  whiteText.value = String(whiteValue.value)
+function pickWhite(key: LevelKey) {
+  whiteKey.value = key
+  xrayOpenMenu.value = null
 }
 
-function bumpGamma(delta: number) {
-  const next = Math.round((gammaValue.value + delta) / GAMMA_STEP) * GAMMA_STEP
-  syncGamma(next)
+function toggleXrayRender() {
+  xrayRenderOn.value = !xrayRenderOn.value
 }
 
-function bumpWhite(delta: number) {
-  syncWhite(whiteValue.value + delta)
+function onXrayDocClick(ev: MouseEvent) {
+  const t = ev.target as HTMLElement | null
+  if (t?.closest('.xray-dropdown')) return
+  xrayOpenMenu.value = null
 }
 
-function onGammaBlur() {
-  const n = Number.parseFloat(gammaText.value)
-  if (Number.isNaN(n)) {
-    gammaText.value = gammaValue.value.toFixed(2)
+async function applyXrayProcess() {
+  const src = transparentImageUrl.value
+  if (!src) {
+    xrayDisplayUrl.value = ''
     return
   }
-  syncGamma(n)
+  const seq = ++xrayApplySeq
+  try {
+    const url = await processImage(src, {
+      gamma: gammaValue.value,
+      white: whiteValue.value,
+      black: 0,
+      pseudoColor: xrayRenderOn.value,
+    })
+    if (seq !== xrayApplySeq) return
+    xrayDisplayUrl.value = url
+  } catch (e) {
+    if (seq !== xrayApplySeq) return
+    console.error('[透视影像] 处理失败', e)
+    // 处理失败时仍显示原图，避免空白
+    xrayDisplayUrl.value = src
+  }
 }
 
-function onWhiteBlur() {
-  const n = Number.parseInt(whiteText.value, 10)
-  if (Number.isNaN(n)) {
-    whiteText.value = String(whiteValue.value)
-    return
-  }
-  syncWhite(n)
+function scheduleXrayApply() {
+  window.clearTimeout(xrayApplyTimer)
+  xrayApplyTimer = window.setTimeout(() => {
+    void applyXrayProcess()
+  }, 60)
+}
+
+function resetXrayProcessState() {
+  window.clearTimeout(xrayApplyTimer)
+  xrayApplySeq++
+  xrayDisplayUrl.value = ''
+  gammaKey.value = 'mid'
+  whiteKey.value = 'mid'
+  xrayRenderOn.value = false
+  xrayOpenMenu.value = null
 }
 
 /** 车身影像 — 车身图 / 车顶图 / 车侧图 三视图循环切换 */
@@ -182,6 +231,13 @@ const transparentImageUrl = computed(() => xrayImageUrls.value[xrayView.value])
 const xrayViewLabel = computed(() => XRAY_VIEW_LABELS[xrayView.value])
 const showTransDelConfirm = ref(false)
 
+watch(
+  [transparentImageUrl, gammaKey, whiteKey, xrayRenderOn],
+  () => {
+    scheduleXrayApply()
+  },
+)
+
 function onXrayViewSwap() {
   const idx = XRAY_VIEW_ORDER.indexOf(xrayView.value)
   xrayView.value = XRAY_VIEW_ORDER[(idx + 1) % XRAY_VIEW_ORDER.length]
@@ -195,6 +251,8 @@ function onTransDelClick() {
 function onTransDelYes() {
   showTransDelConfirm.value = false
   xrayImageUrls.value = { '200': '', '160': '', mosaic: '' }
+  xrayDisplayUrl.value = ''
+  xrayBoxPanelRef.value?.clearBoxes()
 }
 
 function onTransDelNo() {
@@ -329,14 +387,24 @@ const videoHint = computed(() => '实时视频已关闭')
 /** 车顶/车侧画框后的裁切预览（填入右侧「实时视频」固定容器） */
 const liveCropPreviewUrl = ref('')
 const bodyPcPanelRef = ref<{ clearBoxes: () => void } | null>(null)
+const xrayBoxPanelRef = ref<{ clearBoxes: () => void } | null>(null)
 
 function onBodyBoxCrop(dataUrl: string) {
+  liveCropPreviewUrl.value = dataUrl
+}
+
+function onXrayBoxCrop(dataUrl: string) {
   liveCropPreviewUrl.value = dataUrl
 }
 
 function onDeleteBodyBoxes() {
   liveCropPreviewUrl.value = ''
   bodyPcPanelRef.value?.clearBoxes()
+}
+
+function onDeleteXrayBoxes() {
+  liveCropPreviewUrl.value = ''
+  xrayBoxPanelRef.value?.clearBoxes()
 }
 const showVideoHint = computed(() => true)
 
@@ -499,6 +567,7 @@ function doReset() {
   bodyImageUrls.value = { body: '', top: '', side: '' }
   xrayImageUrls.value = { '200': '', '160': '', mosaic: '' }
   liveCropPreviewUrl.value = ''
+  resetXrayProcessState()
   // 清通行码
   passcode.value = null
   // 清工作流状态
@@ -909,11 +978,14 @@ function onStopResetClose() {
 onMounted(async () => {
   loadDicts()
   setupWS()
+  document.addEventListener('click', onXrayDocClick)
 
   // 实时视频已禁用海康连接（不启动 startVideo）
 })
 
 onUnmounted(() => {
+  document.removeEventListener('click', onXrayDocClick)
+  window.clearTimeout(xrayApplyTimer)
   wsStore.disconnect()
 })
 
@@ -970,49 +1042,66 @@ const anyDialogOpen = computed(
           />
         </div>
 
-        <!-- 透视影像 — 灰场/亮场对齐 QDoubleSpinBox / QSpinBox -->
+        <!-- 透视影像 — 灰场/亮场三档 + 渲染伪彩（对齐 color_demo） -->
         <div class="panel-card panel-stretch">
           <div class="panel-header panel-header-xray">
             <img src="/assets/img/a_xray.png" class="panel-icon" alt="" />
             <span class="panel-title">透视影像</span>
             <span class="xray-meta">{{ xrayViewLabel }}：</span>
             <span class="xray-label">灰场</span>
-            <div class="xray-spinbox is-active">
-              <input
-                v-model="gammaText"
-                class="xray-spin-input"
-                type="text"
-                inputmode="decimal"
-                @blur="onGammaBlur"
-                @keydown.enter="onGammaBlur"
-              />
-              <div class="spin-btns">
-                <button type="button" class="spin-btn" title="增加" @click="bumpGamma(GAMMA_STEP)">▴</button>
-                <button type="button" class="spin-btn" title="减少" @click="bumpGamma(-GAMMA_STEP)">▾</button>
-              </div>
+            <div class="xray-dropdown" :class="{ open: xrayOpenMenu === 'gamma' }">
+              <button type="button" class="xray-dropdown-trigger" @click.stop="toggleXrayMenu('gamma')">
+                <span>{{ gammaLabel }}</span>
+                <i class="xray-caret">▾</i>
+              </button>
+              <ul v-show="xrayOpenMenu === 'gamma'" class="xray-dropdown-menu">
+                <li
+                  v-for="item in GAMMA_LEVELS"
+                  :key="item.key"
+                  :class="{ active: gammaKey === item.key }"
+                  @click.stop="pickGamma(item.key)"
+                >
+                  {{ item.label }}
+                </li>
+              </ul>
             </div>
             <span class="xray-label">亮场</span>
-            <div class="xray-spinbox">
-              <input
-                v-model="whiteText"
-                class="xray-spin-input"
-                type="text"
-                inputmode="numeric"
-                @blur="onWhiteBlur"
-                @keydown.enter="onWhiteBlur"
-              />
-              <div class="spin-btns">
-                <button type="button" class="spin-btn" title="增加" @click="bumpWhite(WHITE_STEP)">▴</button>
-                <button type="button" class="spin-btn" title="减少" @click="bumpWhite(-WHITE_STEP)">▾</button>
-              </div>
+            <div class="xray-dropdown" :class="{ open: xrayOpenMenu === 'white' }">
+              <button type="button" class="xray-dropdown-trigger" @click.stop="toggleXrayMenu('white')">
+                <span>{{ whiteLabel }}</span>
+                <i class="xray-caret">▾</i>
+              </button>
+              <ul v-show="xrayOpenMenu === 'white'" class="xray-dropdown-menu">
+                <li
+                  v-for="item in WHITE_LEVELS"
+                  :key="item.key"
+                  :class="{ active: whiteKey === item.key }"
+                  @click.stop="pickWhite(item.key)"
+                >
+                  {{ item.label }}
+                </li>
+              </ul>
             </div>
+            <PreviewButton label="删除框图" title="删除框选图" @click="onDeleteXrayBoxes" />
             <PreviewButton label="删除" title="不合格透视图删除" @click="onTransDelClick" />
-            <PreviewButton label="渲染" />
+            <PreviewButton
+              label="渲染"
+              title="伪彩渲染"
+              :active="xrayRenderOn"
+              @click="toggleXrayRender"
+            />
             <button type="button" class="header-icon-btn header-icon-swap" title="切换视角" @click="onXrayViewSwap">
               <img src="/assets/img/a_leftright.png" alt="" />
             </button>
           </div>
-          <EyeWidget large placeholder="透视影像" :image-url="transparentImageUrl || undefined" />
+          <!-- 与车身框图相同：在色阶/伪彩结果上画框，裁切进实时视频区（不测距） -->
+          <BodyPointCloudPanel
+            ref="xrayBoxPanelRef"
+            placeholder="透视影像"
+            :image-url="xrayDisplayUrl || undefined"
+            view="body"
+            @crop="onXrayBoxCrop"
+          />
         </div>
 
         <!-- 底部：流程图标 + 车辆动画 + 硬件状态 -->
@@ -1485,67 +1574,72 @@ const anyDialogOpen = computed(
   color: $text-gray;
 }
 
-/* 对齐 Qt QSpinBox / QDoubleSpinBox：数值 + 上下调节钮 */
-.xray-spinbox {
-  display: inline-flex;
-  align-items: stretch;
-  height: 26px;
-  border: 1px solid #c5d5f8;
-  border-radius: 3px;
-  background: #fff;
-  overflow: hidden;
-  box-sizing: border-box;
-
-  &.is-active {
-    background: #dbeafe;
-    border-color: #93b4f5;
-  }
-}
-
-.xray-spin-input {
-  width: 44px;
-  border: none;
-  outline: none;
-  background: transparent;
-  font-size: 12px;
-  text-align: center;
-  padding: 0 4px;
-  color: #222;
-}
-
-.spin-btns {
-  display: flex;
-  flex-direction: column;
-  width: 16px;
-  border-left: 1px solid #c5d5f8;
+/* 灰场 / 亮场：高中低下拉（对齐 color_demo，样式贴合现有 header） */
+.xray-dropdown {
+  position: relative;
   flex-shrink: 0;
 }
 
-.spin-btn {
-  flex: 1;
-  margin: 0;
-  padding: 0;
-  border: none;
-  background: #eef4ff;
-  color: #304daf;
-  font-size: 9px;
-  line-height: 1;
-  cursor: pointer;
-  display: flex;
+.xray-dropdown-trigger {
+  min-width: 52px;
+  height: 26px;
+  padding: 0 6px 0 8px;
+  display: inline-flex;
   align-items: center;
-  justify-content: center;
+  justify-content: space-between;
+  gap: 4px;
+  border: 1px solid #c5d5f8;
+  border-radius: 3px;
+  background: #fff;
+  color: #222;
+  cursor: pointer;
+  font-size: 12px;
+  box-sizing: border-box;
+}
 
-  &:hover {
-    background: #dbeafe;
-  }
+.xray-dropdown.open .xray-dropdown-trigger,
+.xray-dropdown-trigger:hover {
+  background: #dbeafe;
+  border-color: #93b4f5;
+}
 
-  &:active {
-    background: #c2d8ff;
-  }
+.xray-caret {
+  font-style: normal;
+  font-size: 10px;
+  color: #304daf;
+  line-height: 1;
+}
 
-  & + & {
-    border-top: 1px solid #c5d5f8;
-  }
+.xray-dropdown-menu {
+  position: absolute;
+  top: calc(100% + 2px);
+  left: 0;
+  z-index: 30;
+  min-width: 100%;
+  margin: 0;
+  padding: 2px 0;
+  list-style: none;
+  background: #fff;
+  border: 1px solid #c5d5f8;
+  border-radius: 3px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.12);
+}
+
+.xray-dropdown-menu li {
+  padding: 4px 10px;
+  cursor: pointer;
+  font-size: 12px;
+  color: #222;
+  white-space: nowrap;
+}
+
+.xray-dropdown-menu li:hover {
+  background: #eef4ff;
+}
+
+.xray-dropdown-menu li.active {
+  background: #dbeafe;
+  font-weight: 600;
 }
 
 .action-btn {

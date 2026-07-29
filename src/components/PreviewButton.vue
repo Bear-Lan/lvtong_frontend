@@ -1,6 +1,8 @@
 <script setup lang="ts">
 defineProps<{
   label?: string
+  /** 开关态高亮（如透视「渲染」伪彩开） */
+  active?: boolean
 }>()
 
 const emit = defineEmits<{
@@ -9,7 +11,7 @@ const emit = defineEmits<{
 </script>
 
 <template>
-  <button class="preview-btn" @click="emit('click')">
+  <button class="preview-btn" :class="{ active }" @click="emit('click')">
     {{ label ?? '预览' }}
   </button>
 </template>
@@ -30,6 +32,15 @@ const emit = defineEmits<{
   &:hover {
     border-color: $btn-preview-text;
     background: #c2d8ff;
+  }
+  &.active {
+    border-color: #c9662a;
+    background: #e07a3a;
+    color: #fff;
+  }
+  &.active:hover {
+    background: #d06a2e;
+    border-color: #b85a22;
   }
 }
 </style>
