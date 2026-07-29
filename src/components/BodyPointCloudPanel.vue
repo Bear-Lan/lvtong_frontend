@@ -434,11 +434,14 @@ function onPointerDown(e: PointerEvent) {
     return
   }
 
+  // 开始画新框：影像上旧框先消失；右侧预览等松手裁切成功后再更新（不在此处 emit）
+  boxes.value = []
+  selectedBoxId.value = null
+
   drawingBox.value = true
   draggingLine.value = false
   draftStart.value = clientToNatural(e.clientX, e.clientY)
   draftEnd.value = { ...draftStart.value }
-  selectedBoxId.value = null
   stage.setPointerCapture(e.pointerId)
 }
 
