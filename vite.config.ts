@@ -18,6 +18,12 @@ export default defineConfig({
         target: 'http://localhost:8081',
         changeOrigin: true,
       },
+      // MediaMTX WebRTC / WHEP（lvtong-backend/deploy/mediamtx，:8889）
+      '/mtx': {
+        target: 'http://127.0.0.1:8889',
+        changeOrigin: true,
+        rewrite: (path) => path.replace(/^\/mtx/, ''),
+      },
       // flask_backend HTTP 8080（HTTPS 跑 8081 给移动 app，Vite 走 HTTP）
       '/api': {
         target: 'http://localhost:8080',

@@ -28,8 +28,8 @@ import type { BookingAcceptPayload, BookingComingPayload } from '@/modules/booki
 import { useRouter } from 'vue-router'
 import { toApiUrl, toStoragePath, joinImagePaths } from '@/utils/imagePath'
 import { processImage } from '@/utils/imageProcess'
-// 实时视频：海康已禁用（避免依赖硬件）
-
+import { useWhepPlayer } from '@/composables/useWhepPlayer'
+import { DEFAULT_WHEP_URL } from '@/config/liveVideo'
 const auth = useAuthStore()
 const wsStore = useWsStore()
 const bookingStore = useBookingStore()
@@ -364,28 +364,46 @@ type CaptureKey = (typeof captureButtons)[number]['key']
 const captureDialog = ref<CaptureKind | null>(null)
 const showLicenseDialog = ref(false)
 
-// ---- 实时视频：车顶相机（camera2）----
-// import { useHikvisionPlayer } from '@/composables/useHikvisionPlayer'
-// import { resolveCameraDeviceId } from '@/config/hikvision'
-// const videoStageRef = ref<HTMLElement | null>(null)
-// const {
-//   status: videoStatus,
-//   statusText: videoStatusText,
-//   iframeRef: videoIframeRef,
-//   iframeSrc: videoIframeSrc,
-//   start: startVideo,
-//   stop: stopVideo,
-//   onIframeLoad: onVideoIframeLoad,
-// } = useHikvisionPlayer(videoStageRef)
-const videoStatus = ref<'idle' | 'loading' | 'ready' | 'playing' | 'error'>('idle')
-const videoIframeRef = ref<HTMLIFrameElement | null>(null)
-const videoIframeSrc = ref('')
-const startVideo = (_deviceId?: string) => { /* noop */ }
-const stopVideo = async () => { /* noop */ }
-const onVideoIframeLoad = () => { /* noop */ }
+// ---- 实时视频：MediaMTX WHEP ----
+const liveVideoRef = ref<HTMLVideoElement | null>(null)
+const {
+  status: liveVideoStatus,
+  error: liveVideoError,
+  play: playLiveVideo,
+  stop: stopLiveVideo,
+} = useWhepPlayer()
 
-const videoHint = computed(() => '实时视频已关闭')
-/** 车顶/车侧画框后的裁切预览（填入右侧「实时视频」固定容器） */
+let liveVideoRetryTimer: number | undefined
+
+const videoHint = computed(() => {
+  if (liveVideoError.value) return liveVideoError.value
+  if (liveVideoStatus.value === 'connecting') return '连接中…'
+  if (liveVideoStatus.value === 'playing') return ''
+  if (liveVideoStatus.value === 'failed' || liveVideoStatus.value === 'disconnected') {
+    return '连接中断'
+  }
+  if (liveVideoStatus.value === 'error') return liveVideoError.value || '实时视频连接失败'
+  return '准备播放…'
+})
+
+async function startLiveVideo() {
+  const el = liveVideoRef.value
+  if (!el) return
+  try {
+    await playLiveVideo({ video: el, whepUrl: DEFAULT_WHEP_URL })
+  } catch {
+    scheduleLiveVideoRetry()
+  }
+}
+
+function scheduleLiveVideoRetry() {
+  window.clearTimeout(liveVideoRetryTimer)
+  liveVideoRetryTimer = window.setTimeout(() => {
+    void startLiveVideo()
+  }, 3000)
+}
+
+/** 框图裁切预览（叠在 WebRTC 视频之上；删框后仍见直播） */
 const liveCropPreviewUrl = ref('')
 const bodyPcPanelRef = ref<{ clearBoxes: () => void } | null>(null)
 const xrayBoxPanelRef = ref<{ clearBoxes: () => void } | null>(null)
@@ -993,17 +1011,19 @@ onMounted(async () => {
   loadDicts()
   setupWS()
   document.addEventListener('click', onXrayDocClick)
-
-  // 实时视频已禁用海康连接（不启动 startVideo）
+  await nextTick()
+  void startLiveVideo()
 })
 
 onUnmounted(() => {
   document.removeEventListener('click', onXrayDocClick)
   window.clearTimeout(xrayApplyTimer)
+  window.clearTimeout(liveVideoRetryTimer)
+  void stopLiveVideo()
   wsStore.disconnect()
 })
 
-/** 任意弹窗打开时无需处理视频（海康已禁用） */
+/** 任意弹窗打开（采集/预约等仍可能用海康 HWND） */
 const anyDialogOpen = computed(
   () =>
     showBooking.value ||
@@ -1146,13 +1166,24 @@ const anyDialogOpen = computed(
             </button>
           </div>
           <div class="video-area">
+            <video
+              ref="liveVideoRef"
+              class="live-webrtc"
+              muted
+              autoplay
+              playsinline
+            />
             <img
               v-if="liveCropPreviewUrl"
               :src="liveCropPreviewUrl"
               class="video-crop-preview"
               alt="框图预览"
             />
-            <div v-else class="video-status">
+            <div
+              v-if="!liveCropPreviewUrl && liveVideoStatus !== 'playing'"
+              class="video-status"
+              :class="{ err: liveVideoStatus === 'error' || !!liveVideoError }"
+            >
               {{ videoHint }}
             </div>
           </div>
@@ -1435,7 +1466,7 @@ const anyDialogOpen = computed(
       @close="stopErrorVisible = false"
     />
 
-    <!-- 实时视频：海康已禁用，不渲染 iframe -->
+    <!-- 主页实时视频：MediaMTX WHEP <video>，无海康 iframe -->
   </div>
 </template>
 
@@ -1694,18 +1725,39 @@ const anyDialogOpen = computed(
   overflow: hidden;
 }
 
+.live-webrtc {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  background: #1a1a1a;
+  z-index: 1;
+}
+
 .video-crop-preview {
+  position: absolute;
+  inset: 0;
+  margin: auto;
   max-width: 100%;
   max-height: 100%;
   width: auto;
   height: auto;
   object-fit: contain;
+  z-index: 2;
+  pointer-events: none;
+  /* 盖住下层实时视频，避免半透明透出 */
+  background: #1a1a1a;
 }
 
 .video-status {
+  position: relative;
+  z-index: 3;
   font-size: 16px;
   color: #999;
   user-select: none;
+  padding: 12px;
+  text-align: center;
 
   &.err {
     color: #c0392b;
