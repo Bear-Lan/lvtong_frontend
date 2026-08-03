@@ -55,6 +55,13 @@ const workflow = ref({
   checkStep: 0,
   /** 当前检测步骤文字提示（来自 WS detection_step message） */
   stepMessage: '',
+  // ---- 6 个时间字段：权威源是后端 _booking_state；前端仅镜像显示 ----
+  btnPrebookTime: '',        // 司机按键预约
+  acceptanceTime: '',         // 受理
+  opengateTime: '',           // 开闸
+  openlightscreenTime: '',    // 光幕开
+  closelightscreenTime: '',   // 光幕关
+  cdPhotoTime: '',            // 车顶拍照
 })
 
 /** 弹窗可见：与 Pinia 同步 — 对齐 m_pOrderDialog->show */
@@ -611,7 +618,11 @@ function doReset() {
   workflow.value.checkStep = 0
   workflow.value.stepMessage = ''
   workflow.value.btnPrebookTime = ''
+  workflow.value.acceptanceTime = ''
   workflow.value.opengateTime = ''
+  workflow.value.openlightscreenTime = ''
+  workflow.value.closelightscreenTime = ''
+  workflow.value.cdPhotoTime = ''
 }
 
 function onConfirm() {
@@ -683,15 +694,15 @@ async function onSubmitConfirmYes() {
     body.passcode_province_count = pc.provinceCount
   }
 
-  // ---- 4. 7 个时间戳（能从 store / workflow 拿的拿） ----
-  // btn_prebook_time ← 预约时间（Qt PLC booking false→true）
+  // ---- 4. 7 个时间戳（权威源是后端 _booking_state；前端仅在缺失时同步显示） ----
+  // 注意：实际入库值由后端 submit_inspection 从 _booking_state 注入（最强权威）。
+  // 前端发送的值只用于覆盖（让前端有"重置后还在用老时间"的余地），一般置空让后端注入。
   if (workflow.value.btnPrebookTime) body.btn_prebook_time = workflow.value.btnPrebookTime
-  // acceptance_time ← 受理时间（flask 已存，前端可读 bookingStore）
   if (bookingStore.acceptanceTime) body.acceptance_time = bookingStore.acceptanceTime
-  // opengate_time ← 开闸时间（mock_back accepted 推 plc_status green）
   if (workflow.value.opengateTime) body.opengate_time = workflow.value.opengateTime
-  // cd_photo_time ← 拍车顶时（mock_back 没车顶数据源，留空）
-  // openlightscreen_time / closelightscreen_time ← 设备联动（mock 没模拟，留空）
+  if (workflow.value.openlightscreenTime) body.openlightscreen_time = workflow.value.openlightscreenTime
+  if (workflow.value.closelightscreenTime) body.closelightscreen_time = workflow.value.closelightscreenTime
+  if (workflow.value.cdPhotoTime) body.cd_photo_time = workflow.value.cdPhotoTime
   // inspection_time ← 后端 submit 时打（不用前端传）
 
   try {
@@ -787,6 +798,24 @@ function setupWS() {
         linePosition: data.linePosition ?? 0.5,
       })
       workflow.value.bookingActive = true
+    }
+    // 同步 6 个时间字段（来自后端 _booking_state 推送）
+    if (data) {
+      const a = data as unknown as Record<string, string | undefined>
+      bookingStore.setTimeFields({
+        btnPrebookTime: a.btnPrebookTime,
+        acceptanceTime: a.acceptanceTime,
+        opengateTime: a.opengateTime,
+        openlightscreenTime: a.openlightscreenTime,
+        closelightscreenTime: a.closelightscreenTime,
+        cdPhotoTime: a.cdPhotoTime,
+      })
+      workflow.value.btnPrebookTime = a.btnPrebookTime || workflow.value.btnPrebookTime
+      workflow.value.acceptanceTime = a.acceptanceTime || workflow.value.acceptanceTime
+      workflow.value.opengateTime = a.opengateTime || workflow.value.opengateTime
+      workflow.value.openlightscreenTime = a.openlightscreenTime || workflow.value.openlightscreenTime
+      workflow.value.closelightscreenTime = a.closelightscreenTime || workflow.value.closelightscreenTime
+      workflow.value.cdPhotoTime = a.cdPhotoTime || workflow.value.cdPhotoTime
     }
   })
 

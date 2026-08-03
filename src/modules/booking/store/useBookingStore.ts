@@ -27,6 +27,20 @@ export const useBookingStore = defineStore('booking', () => {
   /** SP 视频流预留 */
   const videoStreamUrl = ref<string | null>(null)
 
+  // ---- 时间字段（对齐 Qt m_VehicleInspection.* 命名，权威源 = 后端 _booking_state） ----
+  /** 司机按键预约时间（来自后端栈） */
+  const btnPrebookTime = ref('')
+  /** 受理时间 */
+  const acceptanceTime = ref('')
+  /** 开闸时间 */
+  const opengateTime = ref('')
+  /** 光幕开启 */
+  const openlightscreenTime = ref('')
+  /** 光幕关闭 */
+  const closelightscreenTime = ref('')
+  /** 车顶拍照 */
+  const cdPhotoTime = ref('')
+
   /** 底部流程「预约」高亮 */
   const bookingActive = computed(() => isDetection.value || checkStep.value > 0)
 
@@ -66,6 +80,23 @@ export const useBookingStore = defineStore('booking', () => {
     videoStreamUrl.value = url
   }
 
+  /** 时间字段 setter（WS 收到 booking_accepted 时一次性写） */
+  function setTimeFields(p: {
+    btnPrebookTime?: string
+    acceptanceTime?: string
+    opengateTime?: string
+    openlightscreenTime?: string
+    closelightscreenTime?: string
+    cdPhotoTime?: string
+  }) {
+    if (p.btnPrebookTime !== undefined) btnPrebookTime.value = p.btnPrebookTime
+    if (p.acceptanceTime !== undefined) acceptanceTime.value = p.acceptanceTime
+    if (p.opengateTime !== undefined) opengateTime.value = p.opengateTime
+    if (p.openlightscreenTime !== undefined) openlightscreenTime.value = p.openlightscreenTime
+    if (p.closelightscreenTime !== undefined) closelightscreenTime.value = p.closelightscreenTime
+    if (p.cdPhotoTime !== undefined) cdPhotoTime.value = p.cdPhotoTime
+  }
+
   /** 用后端 /state 同步 */
   function syncFromServer(state: BookingProcessState) {
     isDetection.value = !!state.is_detection
@@ -74,6 +105,14 @@ export const useBookingStore = defineStore('booking', () => {
     carLength.value = state.car_length ?? carLength.value
     isCheckXRay.value = state.is_check_xray ?? isCheckXRay.value
     bookingDialogShown.value = !!state.booking_dialog_shown
+    // 同步时间字段（如果后端 state 里有）
+    const s = state as Record<string, unknown>
+    if (typeof s.btn_prebook_time === 'string') btnPrebookTime.value = s.btn_prebook_time
+    if (typeof s.acceptance_time === 'string') acceptanceTime.value = s.acceptance_time
+    if (typeof s.opengate_time === 'string') opengateTime.value = s.opengate_time
+    if (typeof s.openlightscreen_time === 'string') openlightscreenTime.value = s.openlightscreen_time
+    if (typeof s.closelightscreen_time === 'string') closelightscreenTime.value = s.closelightscreen_time
+    if (typeof s.cd_photo_time === 'string') cdPhotoTime.value = s.cd_photo_time
   }
 
   function reset() {
@@ -85,6 +124,13 @@ export const useBookingStore = defineStore('booking', () => {
     isCheckXRay.value = true
     bookingDialogShown.value = false
     videoStreamUrl.value = null
+    // 时间字段也清空
+    btnPrebookTime.value = ''
+    acceptanceTime.value = ''
+    opengateTime.value = ''
+    openlightscreenTime.value = ''
+    closelightscreenTime.value = ''
+    cdPhotoTime.value = ''
   }
 
   return {
@@ -96,12 +142,19 @@ export const useBookingStore = defineStore('booking', () => {
     isCheckXRay,
     bookingDialogShown,
     videoStreamUrl,
+    btnPrebookTime,
+    acceptanceTime,
+    opengateTime,
+    openlightscreenTime,
+    closelightscreenTime,
+    cdPhotoTime,
     bookingActive,
     openDialog,
     closeDialog,
     applyAccept,
     applyReject,
     setVideoStreamUrl,
+    setTimeFields,
     syncFromServer,
     reset,
   }
