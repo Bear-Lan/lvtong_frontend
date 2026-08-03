@@ -18,7 +18,7 @@ export default defineConfig({
         target: 'http://localhost:8081',
         changeOrigin: true,
       },
-      // MediaMTX WebRTC / WHEP（lvtong-backend/deploy/mediamtx，:8889）
+      // MediaMTX WebRTC / WHEP（lvtong-backend/tools/mediamtx，:8889）
       '/mtx': {
         target: 'http://127.0.0.1:8889',
         changeOrigin: true,
