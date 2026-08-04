@@ -1,11 +1,11 @@
 <script setup lang="ts">
 /**
  * 可视对讲 — 对齐 Qt TalkDialog.ui / TalkDialog.cpp
- * 视频源与预约弹窗右半部分、主页实时视频同一路（MediaMTX WHEP）
+ * 视频源与预约弹窗右侧同一路：camera4 → MediaMTX cam4 WHEP（主页仍为 cam1/camera2）
  */
 import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useWhepPlayer } from '@/composables/useWhepPlayer'
-import { DEFAULT_WHEP_URL } from '@/config/liveVideo'
+import { TALK_WHEP_URL } from '@/config/liveVideo'
 
 const emit = defineEmits<{
   close: []
@@ -37,7 +37,7 @@ async function startTalkVideo() {
   const el = liveVideoRef.value
   if (!el) return
   try {
-    await playVideo({ video: el, whepUrl: DEFAULT_WHEP_URL })
+    await playVideo({ video: el, whepUrl: TALK_WHEP_URL })
   } catch {
     window.clearTimeout(videoRetryTimer)
     videoRetryTimer = window.setTimeout(() => {

@@ -10,7 +10,7 @@ import SlipToggle from './components/SlipToggle.vue'
 import { useBookingDialog } from './composables/useBookingDialog'
 import type { BookingAcceptPayload } from './types'
 import { useWhepPlayer } from '@/composables/useWhepPlayer'
-import { DEFAULT_WHEP_URL } from '@/config/liveVideo'
+import { TALK_WHEP_URL } from '@/config/liveVideo'
 
 const emit = defineEmits<{
   close: []
@@ -41,7 +41,7 @@ const {
   confirmYes,
 } = useBookingDialog()
 
-// ---- 视频对讲：与主页实时视频同一路（camera2 / 101 → MediaMTX WHEP）----
+// ---- 视频：camera4 → MediaMTX cam4 WHEP（与主页 cam1/camera2 分离）----
 const liveVideoRef = ref<HTMLVideoElement | null>(null)
 const {
   status: videoStatus,
@@ -68,7 +68,7 @@ async function startBookingVideo() {
   const el = liveVideoRef.value
   if (!el) return
   try {
-    await playVideo({ video: el, whepUrl: DEFAULT_WHEP_URL })
+    await playVideo({ video: el, whepUrl: TALK_WHEP_URL })
   } catch {
     window.clearTimeout(videoRetryTimer)
     videoRetryTimer = window.setTimeout(() => {
