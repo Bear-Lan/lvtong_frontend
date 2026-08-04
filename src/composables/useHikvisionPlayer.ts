@@ -11,6 +11,16 @@ export type HikLayoutRect = {
   height: number
 }
 
+export type HikStartOptions = {
+  /** 预览成功后自动开始对讲（对齐 Qt TalkDialog / OrderDialog SP） */
+  autoTalk?: boolean
+  /**
+   * 仅对讲：插件 HWND 始终钉在屏外，画面由业务侧 WHEP 等另路播放。
+   * 插件仍会开 RealPlay（SDK 对讲前置），只是用户看不见插件窗。
+   */
+  talkOnly?: boolean
+}
+
 const PLAYER_URL = '/hikvision/player.html'
 const DEFAULT_PTZ_SPEED = 4
 
@@ -35,15 +45,27 @@ export function useHikvisionPlayer(anchorRef: Ref<HTMLElement | null>) {
   const iframeSrc = ref('')
   /** 当前预览对应的 devices.device_id */
   const currentDeviceId = ref(DEFAULT_GUN_DEVICE_ID)
+  const talking = ref(false)
+  const audioChannel = ref<number | null>(null)
 
   let pendingDeviceId = DEFAULT_GUN_DEVICE_ID
   let startAfterReady = false
   let startSent = false
+  let autoTalkAfterPlay = false
+  let talkOnlyMode = false
   let lastSentLayout: HikLayoutRect | null = null
   let stopWaiters: Array<() => void> = []
   let captureWaiters: Array<(r: { ok: boolean; dataUrl?: string; message?: string }) => void> =
     []
+  let talkWaiters: Array<(r: { ok: boolean; talking: boolean; error?: string }) => void> = []
   let ptzAutoOn = false
+
+  const OFFSCREEN_LAYOUT: HikLayoutRect = {
+    left: -10000,
+    top: -10000,
+    width: 160,
+    height: 90,
+  }
 
   function postToIframe(msg: Record<string, unknown>) {
     const win = iframeRef.value?.contentWindow
@@ -52,6 +74,8 @@ export function useHikvisionPlayer(anchorRef: Ref<HTMLElement | null>) {
   }
 
   function measureAnchor(): HikLayoutRect | null {
+    if (talkOnlyMode) return { ...OFFSCREEN_LAYOUT }
+
     const el = anchorRef.value
     if (!el) return null
     const r = el.getBoundingClientRect()
@@ -75,7 +99,27 @@ export function useHikvisionPlayer(anchorRef: Ref<HTMLElement | null>) {
     if (!rect) return
     if (!force && !rectChanged(lastSentLayout, rect)) return
     lastSentLayout = rect
-    postToIframe({ type: 'hik-layout', rect })
+    postToIframe({ type: 'hik-layout', rect, force })
+  }
+
+  /** 确认框等遮罩打开时把 HWND 挪走，避免挡住 HTML 按钮 */
+  function hidePluginOverlay() {
+    lastSentLayout = { left: -10000, top: -10000, width: 1, height: 1 }
+    postToIframe({ type: 'hik-layout', rect: lastSentLayout, force: true })
+  }
+
+  function startTalk() {
+    if (status.value !== 'playing') return
+    postToIframe({ type: 'hik-talk-start' })
+  }
+
+  function stopTalk() {
+    postToIframe({ type: 'hik-talk-stop' })
+  }
+
+  function toggleTalk() {
+    if (talking.value) stopTalk()
+    else startTalk()
   }
 
   function onMessage(ev: MessageEvent) {
@@ -98,19 +142,50 @@ export function useHikvisionPlayer(anchorRef: Ref<HTMLElement | null>) {
     if (data.type === 'hik-playing') {
       status.value = 'playing'
       statusText.value = '预览中'
+      if (typeof data.audioChannel === 'number') {
+        audioChannel.value = data.audioChannel
+        statusText.value = '预览成功，可对讲'
+      }
+      window.setTimeout(() => postLayout(true), 150)
+      if (autoTalkAfterPlay) {
+        autoTalkAfterPlay = false
+        window.setTimeout(() => startTalk(), 200)
+      }
       return
     }
 
     if (data.type === 'hik-error') {
       status.value = 'error'
       statusText.value = String(data.message || '摄像头启动失败')
+      talking.value = false
       return
     }
 
     if (data.type === 'hik-stopped') {
+      talking.value = false
+      audioChannel.value = null
       const waiters = stopWaiters
       stopWaiters = []
       waiters.forEach((fn) => fn())
+      return
+    }
+
+    if (data.type === 'hik-talk') {
+      talking.value = !!data.talking
+      if (data.error) {
+        statusText.value = String(data.error)
+      } else {
+        statusText.value = talking.value ? '对讲中' : '预览成功，可对讲'
+      }
+      const waiters = talkWaiters
+      talkWaiters = []
+      waiters.forEach((fn) =>
+        fn({
+          ok: !data.error,
+          talking: !!data.talking,
+          error: data.error ? String(data.error) : undefined,
+        }),
+      )
       return
     }
 
@@ -131,6 +206,8 @@ export function useHikvisionPlayer(anchorRef: Ref<HTMLElement | null>) {
     const deviceId = pendingDeviceId
     status.value = 'loading'
     statusText.value = '正在加载摄像头配置…'
+    talking.value = false
+    audioChannel.value = null
 
     let cfg: DevicePreviewConfig
     try {
@@ -175,13 +252,17 @@ export function useHikvisionPlayer(anchorRef: Ref<HTMLElement | null>) {
     }, 50)
   }
 
-  function start(deviceId = DEFAULT_GUN_DEVICE_ID) {
+  function start(deviceId = DEFAULT_GUN_DEVICE_ID, opts?: HikStartOptions) {
     pendingDeviceId = deviceId
     currentDeviceId.value = deviceId
     ptzAutoOn = false
     startSent = false
     startAfterReady = true
+    autoTalkAfterPlay = !!opts?.autoTalk
+    talkOnlyMode = !!opts?.talkOnly
     lastSentLayout = null
+    talking.value = false
+    audioChannel.value = null
     iframeSrc.value = `${PLAYER_URL}?t=${Date.now()}`
   }
 
@@ -192,6 +273,9 @@ export function useHikvisionPlayer(anchorRef: Ref<HTMLElement | null>) {
   function stop(): Promise<void> {
     return new Promise((resolve) => {
       ptzAutoOn = false
+      autoTalkAfterPlay = false
+      talkOnlyMode = false
+      talking.value = false
       if (!iframeRef.value || !iframeSrc.value) {
         status.value = 'idle'
         statusText.value = '实时摄像头画面区域'
@@ -207,6 +291,7 @@ export function useHikvisionPlayer(anchorRef: Ref<HTMLElement | null>) {
         lastSentLayout = null
         startSent = false
         startAfterReady = false
+        audioChannel.value = null
         status.value = 'idle'
         statusText.value = '实时摄像头画面区域'
         resolve()
@@ -284,11 +369,17 @@ export function useHikvisionPlayer(anchorRef: Ref<HTMLElement | null>) {
     iframeRef,
     iframeSrc,
     currentDeviceId,
+    talking,
+    audioChannel,
     start,
     stop,
     onIframeLoad,
     captureJpegDataUrl,
     postLayout,
+    hidePluginOverlay,
+    startTalk,
+    stopTalk,
+    toggleTalk,
     ptzStart,
     ptzStop,
   }

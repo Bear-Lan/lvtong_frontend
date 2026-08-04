@@ -6,12 +6,15 @@
   var g_deviceIdentify = ''
   var g_inited = false
   var g_playing = false
+  var g_talking = false
   var g_busy = false
   var g_layout = null
   var g_layoutWaiters = []
   var g_analogInfoReady = false
   /** 当前预览通道，供云台 ISAPI 使用 */
   var g_playChannelId = 1
+  /** 对讲通道（I_GetAudioInfo） */
+  var g_audioChannel = null
 
   function post(msg) {
     try {
@@ -294,14 +297,209 @@
     })
   }
 
+  function formatTalkErr(oError, fallback) {
+    if (!oError) return fallback || '未知错误'
+    if (typeof oError === 'string') return oError
+    var code = oError.errorCode
+    var msg = oError.errorMsg
+    if (msg && typeof msg === 'object') {
+      try {
+        msg = JSON.stringify(msg)
+      } catch (e) {
+        msg = String(msg)
+      }
+    }
+    var text = ''
+    if (code != null) text += '[' + code + '] '
+    text += msg || fallback || '未知错误'
+    if (
+      code === 1000 ||
+      code === 5000 ||
+      /unknown error/i.test(String(msg || ''))
+    ) {
+      text +=
+        ' | 排查: ①Windows麦克风允许桌面应用 ②本机有可用麦克风 ③设备未被其它客户端占用对讲 ④先关预览声音再对讲'
+    }
+    return text
+  }
+
+  function closeAllSound() {
+    return new Promise(function (resolve) {
+      try {
+        var all = WebVideoCtrl.I_GetWindowStatus() || []
+        var i
+        for (i = 0; i < all.length; i++) {
+          if (all[i] && all[i].bSound) {
+            try {
+              WebVideoCtrl.I_CloseSound(all[i].iIndex)
+            } catch (e) {}
+          }
+        }
+      } catch (e2) {}
+      try {
+        WebVideoCtrl.I_CloseSound().then(
+          function () {
+            resolve()
+          },
+          function () {
+            resolve()
+          },
+        )
+      } catch (e3) {
+        resolve()
+      }
+    })
+  }
+
+  function getAudioInfo() {
+    return new Promise(function (resolve, reject) {
+      WebVideoCtrl.I_GetAudioInfo(g_deviceIdentify, {
+        success: function (xmlDoc) {
+          var id = null
+          var compress = ''
+          try {
+            id = $(xmlDoc)
+              .find('TwoWayAudioChannel')
+              .eq(0)
+              .find('id')
+              .eq(0)
+              .text()
+            compress = $(xmlDoc).find('audioCompressionType').eq(0).text()
+          } catch (e) {}
+          if (!id) id = '1'
+          g_audioChannel = parseInt(id, 10)
+          post({
+            type: 'hik-log',
+            text:
+              '音频参数 channel=' +
+              g_audioChannel +
+              (compress ? ' compress=' + compress : ''),
+          })
+          resolve(g_audioChannel)
+        },
+        error: function (oError) {
+          reject(new Error(formatTalkErr(oError, '获取对讲通道失败')))
+        },
+      })
+    })
+  }
+
+  function forceCloseTalkChannel() {
+    return new Promise(function (resolve) {
+      if (!g_deviceIdentify) {
+        resolve()
+        return
+      }
+      var settled = false
+      function done(msg) {
+        if (settled) return
+        settled = true
+        if (msg) post({ type: 'hik-log', text: msg })
+        resolve()
+      }
+      var ch = g_audioChannel || 1
+      var uri = 'ISAPI/System/TwoWayAudio/channels/' + ch + '/close'
+      setTimeout(function () {
+        done(null)
+      }, 1500)
+      try {
+        WebVideoCtrl.I_SendHTTPRequest(g_deviceIdentify, uri, {
+          type: 'PUT',
+          data: '',
+          success: function () {
+            done('已强制关闭对讲通道 ' + ch)
+          },
+          error: function () {
+            done(null)
+          },
+        })
+      } catch (e) {
+        done(null)
+      }
+    })
+  }
+
+  function stopVoiceTalk() {
+    return new Promise(function (resolve) {
+      try {
+        WebVideoCtrl.I_StopVoiceTalk().then(
+          function () {
+            g_talking = false
+            resolve()
+          },
+          function () {
+            g_talking = false
+            resolve()
+          },
+        )
+      } catch (e) {
+        g_talking = false
+        resolve()
+      }
+    })
+  }
+
+  function startVoiceTalk() {
+    return new Promise(function (resolve, reject) {
+      if (!g_playing) {
+        reject(new Error('请先预览成功再对讲'))
+        return
+      }
+      if (g_audioChannel == null || isNaN(g_audioChannel)) {
+        reject(new Error('对讲通道无效'))
+        return
+      }
+      stopVoiceTalk()
+        .then(function () {
+          return closeAllSound()
+        })
+        .then(function () {
+          return forceCloseTalkChannel()
+        })
+        .then(function () {
+          return new Promise(function (r) {
+            setTimeout(r, 300)
+          })
+        })
+        .then(function () {
+          return getAudioInfo()
+        })
+        .then(function (ch) {
+          post({
+            type: 'hik-log',
+            text: 'I_StartVoiceTalk ' + g_deviceIdentify + ' ch=' + ch,
+          })
+          return WebVideoCtrl.I_StartVoiceTalk(g_deviceIdentify, ch)
+        })
+        .then(
+          function () {
+            g_talking = true
+            resolve()
+          },
+          function (oError) {
+            g_talking = false
+            forceCloseTalkChannel()
+              .then(function () {
+                return stopVoiceTalk()
+              })
+              .then(function () {
+                reject(new Error(formatTalkErr(oError, '开始对讲失败')))
+              })
+          },
+        )
+    })
+  }
+
   function destroyAll() {
     return new Promise(function (resolve) {
       function finish() {
         g_playing = false
+        g_talking = false
         g_inited = false
         g_deviceIdentify = ''
         g_analogInfoReady = false
         g_playChannelId = 1
+        g_audioChannel = null
         try {
           var el = document.getElementById('divPlugin')
           if (el) el.innerHTML = ''
@@ -309,32 +507,47 @@
         resolve()
       }
 
-      try {
-        WebVideoCtrl.I_Stop({
-          success: function () {},
-          error: function () {},
-        })
-      } catch (e) {
-        try {
-          WebVideoCtrl.I_Stop()
-        } catch (e2) {}
+      var chain = Promise.resolve()
+      if (g_talking) {
+        chain = chain.then(stopVoiceTalk)
       }
 
-      setTimeout(function () {
-        if (g_deviceIdentify) {
+      chain
+        .then(function () {
           try {
-            WebVideoCtrl.I_Logout(g_deviceIdentify)
-          } catch (e) {}
-        }
-        setTimeout(function () {
+            WebVideoCtrl.I_Stop({
+              success: function () {},
+              error: function () {},
+            })
+          } catch (e) {
+            try {
+              WebVideoCtrl.I_Stop()
+            } catch (e2) {}
+          }
+        })
+        .then(function () {
+          return new Promise(function (r) {
+            setTimeout(r, 150)
+          })
+        })
+        .then(function () {
+          if (g_deviceIdentify) {
+            try {
+              WebVideoCtrl.I_Logout(g_deviceIdentify)
+            } catch (e) {}
+          }
+          return new Promise(function (r) {
+            setTimeout(r, 150)
+          })
+        })
+        .then(function () {
           try {
             if (typeof WebVideoCtrl.I_DestroyPlugin === 'function') {
               WebVideoCtrl.I_DestroyPlugin()
             }
           } catch (e) {}
           setTimeout(finish, 100)
-        }, 150)
-      }, 150)
+        })
     })
   }
 
@@ -393,8 +606,21 @@
         setTimeout(r, 300)
       })
       await startPlay(g_playChannelId, cfg.streamType || 1)
-      status('预览中', 'playing')
-      post({ type: 'hik-playing' })
+      // 出流后对齐一次
+      if (g_layout) applyLayout(g_layout, true)
+
+      var audioCh = null
+      try {
+        status('获取对讲通道…', 'loading')
+        audioCh = await getAudioInfo()
+      } catch (eAudio) {
+        post({
+          type: 'hik-log',
+          text: '获取对讲通道失败: ' + ((eAudio && eAudio.message) || eAudio),
+        })
+      }
+      status(audioCh != null ? '预览成功，可对讲' : '预览中', 'playing')
+      post({ type: 'hik-playing', audioChannel: audioCh })
     } catch (e) {
       status((e && e.message) || '启动失败', 'error')
       try {
@@ -411,6 +637,29 @@
       await destroyAll()
     } catch (e) {}
     post({ type: 'hik-stopped' })
+  }
+
+  async function handleTalkStart() {
+    try {
+      await startVoiceTalk()
+      status('对讲中', 'playing')
+      post({ type: 'hik-talk', talking: true })
+    } catch (e) {
+      status((e && e.message) || '对讲失败', 'error')
+      post({
+        type: 'hik-talk',
+        talking: false,
+        error: (e && e.message) || '对讲失败',
+      })
+    }
+  }
+
+  async function handleTalkStop() {
+    try {
+      await stopVoiceTalk()
+    } catch (e) {}
+    status(g_playing ? '预览成功，可对讲' : '已停止对讲', 'playing')
+    post({ type: 'hik-talk', talking: false })
   }
 
   async function handleCapture() {
@@ -604,7 +853,7 @@
     var data = ev.data
     if (!data || data.target !== 'hik-embed') return
     if (data.type === 'hik-layout') {
-      applyLayout(data.rect || null)
+      applyLayout(data.rect || null, !!data.force)
     } else if (data.type === 'hik-start') {
       handleStart(data.payload || {})
     } else if (data.type === 'hik-stop') {
@@ -613,6 +862,10 @@
       handleCapture()
     } else if (data.type === 'hik-ptz') {
       handlePtz(data)
+    } else if (data.type === 'hik-talk-start') {
+      handleTalkStart()
+    } else if (data.type === 'hik-talk-stop') {
+      handleTalkStop()
     }
   })
 

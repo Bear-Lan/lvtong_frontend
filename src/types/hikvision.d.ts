@@ -52,6 +52,26 @@ interface WebVideoCtrlStatic {
   I_CapturePicData(): Promise<string>
   I_DestroyPlugin?(): void
   I_Resize?(width: number, height: number): void
+  I_GetAudioInfo?(
+    deviceIdentify: string,
+    options: {
+      success?: (xmlDoc: unknown) => void
+      error?: (oError?: { errorCode?: number; errorMsg?: string }) => void
+    },
+  ): void
+  I_StartVoiceTalk?(deviceIdentify: string, iAudioChannel: number): Promise<unknown>
+  I_StopVoiceTalk?(): Promise<unknown>
+  I_CloseSound?(wndIndex?: number): Promise<unknown>
+  I_SendHTTPRequest?(
+    deviceIdentify: string,
+    uri: string,
+    options: {
+      type?: string
+      data?: string
+      success?: (data?: unknown) => void
+      error?: (oError?: { errorCode?: number; errorMsg?: string }) => void
+    },
+  ): Promise<unknown>
   I_GetDevicePort?(deviceIdentify: string): Promise<{ iDevicePort?: number; iRtspPort?: number }>
   I_GetAnalogChannelInfo?(
     deviceIdentify: string,

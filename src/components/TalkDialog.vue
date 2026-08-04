@@ -1,66 +1,54 @@
 <script setup lang="ts">
 /**
  * 可视对讲 — 对齐 Qt TalkDialog.ui / TalkDialog.cpp
- * 视频源与预约弹窗右侧同一路：camera4 → MediaMTX cam4 WHEP（主页仍为 cam1/camera2）
+ * camera5 海康插件预览 + 自动对讲（对齐 lvtong_voice/chat）
  */
 import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
-import { useWhepPlayer } from '@/composables/useWhepPlayer'
-import { TALK_WHEP_URL } from '@/config/liveVideo'
+import { useHikvisionPlayer } from '@/composables/useHikvisionPlayer'
+import { TALK_CAMERA_DEVICE_ID } from '@/config/hikvision'
 
 const emit = defineEmits<{
   close: []
 }>()
 
-const liveVideoRef = ref<HTMLVideoElement | null>(null)
+const liveStageRef = ref<HTMLElement | null>(null)
 const {
   status: videoStatus,
-  error: videoError,
-  play: playVideo,
-  stop: stopVideo,
-} = useWhepPlayer()
-
-let videoRetryTimer: number | undefined
+  statusText: videoStatusText,
+  talking,
+  iframeRef,
+  iframeSrc,
+  start: startHik,
+  stop: stopHik,
+  onIframeLoad,
+  postLayout,
+  hidePluginOverlay,
+  toggleTalk,
+} = useHikvisionPlayer(liveStageRef)
 
 const videoHint = computed(() => {
-  if (videoError.value) return videoError.value
-  if (videoStatus.value === 'connecting') return '连接中…'
   if (videoStatus.value === 'playing') return ''
-  if (videoStatus.value === 'failed' || videoStatus.value === 'disconnected') {
-    return '连接中断'
-  }
-  if (videoStatus.value === 'error') return videoError.value || '视频连接失败'
-  return '视频区域'
+  return videoStatusText.value || '视频区域'
 })
 const showVideoHint = computed(() => videoStatus.value !== 'playing')
 
-async function startTalkVideo() {
-  const el = liveVideoRef.value
-  if (!el) return
-  try {
-    await playVideo({ video: el, whepUrl: TALK_WHEP_URL })
-  } catch {
-    window.clearTimeout(videoRetryTimer)
-    videoRetryTimer = window.setTimeout(() => {
-      void startTalkVideo()
-    }, 3000)
-  }
-}
+const canToggleTalk = computed(() => videoStatus.value === 'playing')
 
 async function onClose() {
-  window.clearTimeout(videoRetryTimer)
-  await stopVideo()
+  hidePluginOverlay()
+  await stopHik()
   emit('close')
 }
 
 onMounted(async () => {
   await nextTick()
   await new Promise<void>((r) => requestAnimationFrame(() => r()))
-  void startTalkVideo()
+  startHik(TALK_CAMERA_DEVICE_ID, { autoTalk: true })
+  window.setTimeout(() => postLayout(true), 300)
 })
 
 onBeforeUnmount(() => {
-  window.clearTimeout(videoRetryTimer)
-  void stopVideo()
+  void stopHik()
 })
 </script>
 
@@ -70,26 +58,39 @@ onBeforeUnmount(() => {
       <h2 class="dialog-title">可视对讲</h2>
 
       <div class="video-panel">
-        <video
-          ref="liveVideoRef"
-          class="live-webrtc"
-          muted
-          autoplay
-          playsinline
-        />
+        <div ref="liveStageRef" class="live-stage" />
         <div
           v-if="showVideoHint"
           class="video-status"
-          :class="{ err: videoStatus === 'error' || !!videoError }"
+          :class="{ err: videoStatus === 'error' }"
         >
           {{ videoHint }}
         </div>
       </div>
 
       <div class="bottom-row">
+        <button
+          type="button"
+          class="btn-talk"
+          :class="{ on: talking }"
+          :disabled="!canToggleTalk"
+          @click="toggleTalk"
+        >
+          {{ talking ? '停止对讲' : '开始对讲' }}
+        </button>
         <button type="button" class="btn-close" @click="onClose">关 闭</button>
       </div>
     </div>
+
+    <iframe
+      v-if="iframeSrc"
+      ref="iframeRef"
+      class="hik-iframe-fs"
+      :src="iframeSrc"
+      title="可视对讲"
+      allow="microphone; fullscreen"
+      @load="onIframeLoad"
+    />
   </div>
 </template>
 
@@ -104,7 +105,6 @@ onBeforeUnmount(() => {
   z-index: 1000;
 }
 
-/* #TalkDialog：0 #5fbb9e → 0.12 #f0f9f5 → 1 #ffffff */
 .talk-dialog {
   width: 840px;
   max-width: 98vw;
@@ -148,13 +148,12 @@ onBeforeUnmount(() => {
   position: relative;
 }
 
-.live-webrtc {
+.live-stage {
   position: absolute;
   inset: 0;
   width: 100%;
   height: 100%;
-  object-fit: contain;
-  background: #1a1a1a;
+  background: #000;
   z-index: 1;
 }
 
@@ -169,31 +168,72 @@ onBeforeUnmount(() => {
   &.err {
     color: #c0392b;
   }
+
+  &.talking {
+    color: #059669;
+    font-weight: 700;
+  }
 }
 
 .bottom-row {
   display: flex;
   justify-content: center;
   align-items: center;
+  gap: 16px;
   padding: 18px 0 8px;
   flex-shrink: 0;
 }
 
+.btn-talk,
 .btn-close {
   min-width: 120px;
   max-width: 120px;
   padding: 4px 12px;
   border: none;
   border-radius: 4px;
-  background: #ef4444;
-  color: #ddd;
   font-size: 14px;
   font-weight: 700;
   font-family: inherit;
   cursor: pointer;
+}
+
+.btn-talk {
+  background: #059669;
+  color: #ddd;
+
+  &.on {
+    background: #d97706;
+  }
+
+  &:hover:not(:disabled) {
+    color: #fff;
+  }
+
+  &:disabled {
+    opacity: 0.55;
+    cursor: not-allowed;
+  }
+}
+
+.btn-close {
+  background: #ef4444;
+  color: #ddd;
 
   &:hover {
     color: #fff;
   }
+}
+
+.hik-iframe-fs {
+  position: fixed;
+  inset: 0;
+  width: 100vw;
+  height: 100vh;
+  border: 0;
+  margin: 0;
+  padding: 0;
+  background: transparent;
+  pointer-events: none;
+  z-index: 1001;
 }
 </style>

@@ -1,16 +1,18 @@
 <script setup lang="ts">
 /**
  * 预约处理 — 1:1 对齐 Qt OrderDialog.ui / OrderDialog.cpp
- * 背景渐变穿透无边框预览区；红线仅在左侧雷达区可拖动
+ * 右侧：WHEP 看画面（cam5）+ 海康插件只做对讲（HWND 屏外）
  */
-import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import ConfirmDialog from './components/ConfirmDialog.vue'
 import RadarImagePanel from './components/RadarImagePanel.vue'
 import SlipToggle from './components/SlipToggle.vue'
 import { useBookingDialog } from './composables/useBookingDialog'
 import type { BookingAcceptPayload } from './types'
 import { useWhepPlayer } from '@/composables/useWhepPlayer'
+import { useHikvisionPlayer } from '@/composables/useHikvisionPlayer'
 import { TALK_WHEP_URL } from '@/config/liveVideo'
+import { TALK_CAMERA_DEVICE_ID } from '@/config/hikvision'
 
 const emit = defineEmits<{
   close: []
@@ -33,7 +35,6 @@ const {
   xrayLabelClass,
   xrayIcon,
   imgInfoText,
-  videoStreamUrl,
   refreshRadarImage,
   toggleVehicleType,
   requestConfirm,
@@ -41,7 +42,7 @@ const {
   confirmYes,
 } = useBookingDialog()
 
-// ---- 视频：camera4 → MediaMTX cam4 WHEP（与主页 cam1/camera2 分离）----
+// ---- 画面：MediaMTX WHEP（camera5 / cam5）----
 const liveVideoRef = ref<HTMLVideoElement | null>(null)
 const {
   status: videoStatus,
@@ -77,6 +78,32 @@ async function startBookingVideo() {
   }
 }
 
+// ---- 对讲：插件只对讲（屏外 RealPlay + autoTalk）----
+const hikTalkAnchorRef = ref<HTMLElement | null>(null)
+const {
+  status: talkStatus,
+  statusText: talkStatusText,
+  talking,
+  iframeRef,
+  iframeSrc,
+  start: startHik,
+  stop: stopHik,
+  onIframeLoad,
+  hidePluginOverlay,
+  toggleTalk,
+} = useHikvisionPlayer(hikTalkAnchorRef)
+
+const talkHint = computed(() => {
+  if (talking.value) return '对讲中'
+  if (talkStatus.value === 'error') return talkStatusText.value || '对讲失败'
+  if (talkStatus.value === 'loading') return '对讲连接中…'
+  if (talkStatus.value === 'playing') return '可对讲'
+  return ''
+})
+const canToggleTalk = computed(
+  () => talkStatus.value === 'playing' || talking.value,
+)
+
 async function handleConfirmYes() {
   try {
     const result = await confirmYes()
@@ -107,25 +134,29 @@ function onAcceptClick() {
   requestConfirm('accept')
 }
 
+watch(confirmVisible, (visible) => {
+  if (visible) hidePluginOverlay()
+})
+
 onMounted(async () => {
   await nextTick()
   await new Promise<void>((r) => requestAnimationFrame(() => r()))
   void startBookingVideo()
+  startHik(TALK_CAMERA_DEVICE_ID, { autoTalk: true, talkOnly: true })
 })
 
 onBeforeUnmount(() => {
   window.clearTimeout(videoRetryTimer)
   void stopVideo()
+  void stopHik()
 })
 </script>
 
 <template>
   <div class="booking-overlay" @click.self="onOverlayClick">
     <div class="booking-dialog" role="dialog" aria-modal="true" @click.stop>
-      <!-- 对齐 titleLabel：居中 + 透明底，绿渐变透过 -->
       <h2 class="dialog-title">预约处理</h2>
 
-      <!-- frame NoFrame：左右 512×256 无边框，背景透明透出渐变 -->
       <div class="preview-row">
         <RadarImagePanel
           v-model:line-position="linePosition"
@@ -141,12 +172,6 @@ onBeforeUnmount(() => {
             autoplay
             playsinline
           />
-          <img
-            v-if="videoStreamUrl"
-            :src="videoStreamUrl"
-            class="video-stream"
-            alt="视频对讲"
-          />
           <div
             v-if="showVideoHint"
             class="video-status"
@@ -157,7 +182,12 @@ onBeforeUnmount(() => {
         </div>
       </div>
 
-      <!-- horizontalLayout_4 stretch 0,0,3,3,0,0,0,0,0 -->
+      <div
+        ref="hikTalkAnchorRef"
+        class="hik-talk-anchor"
+        aria-hidden="true"
+      />
+
       <div class="tool-row">
         <span class="sp sp-40" />
         <button
@@ -171,8 +201,19 @@ onBeforeUnmount(() => {
         </button>
         <span class="img-info" :title="imgInfoText">{{ imgInfoText }}</span>
         <span class="warning-text">请认真确认分界线位置，确保安全！</span>
-        <span class="sp sp-300" />
-        <button type="button" class="btn-hidden" hidden aria-hidden="true" />
+        <button
+          type="button"
+          class="btn-talk"
+          :class="{ on: talking }"
+          :disabled="!canToggleTalk"
+          :title="talkHint || '对讲'"
+          @click="toggleTalk"
+        >
+          {{ talking ? '停止对讲' : '对讲' }}
+        </button>
+        <span v-if="talkHint" class="talk-hint" :class="{ err: talkStatus === 'error' }">
+          {{ talkHint }}
+        </span>
         <span class="sp sp-120" />
         <button type="button" class="btn-hidden" hidden aria-hidden="true" />
         <span class="sp sp-220" />
@@ -180,7 +221,6 @@ onBeforeUnmount(() => {
 
       <p v-if="errorMessage" class="error-tip">{{ errorMessage }}</p>
 
-      <!-- horizontalLayout stretch 0,0,0,0,0,0,2,0,2,0 -->
       <div class="bottom-row">
         <span class="sp sp-80" />
         <span class="label-vehicle">车型：</span>
@@ -233,6 +273,16 @@ onBeforeUnmount(() => {
       @confirm="handleConfirmYes"
       @cancel="cancelConfirm"
     />
+
+    <iframe
+      v-if="iframeSrc"
+      ref="iframeRef"
+      class="hik-iframe-fs"
+      :src="iframeSrc"
+      title="预约对讲"
+      allow="microphone; fullscreen"
+      @load="onIframeLoad"
+    />
   </div>
 </template>
 
@@ -249,7 +299,6 @@ onBeforeUnmount(() => {
   z-index: 1000;
 }
 
-/* #OrderDialog 渐变：0 #5fbb9e → 0.12 #f0f9f5 → 1 #ffffff */
 .booking-dialog {
   width: 1289px;
   height: 560px;
@@ -285,7 +334,6 @@ onBeforeUnmount(() => {
   box-sizing: border-box;
 }
 
-/* 无边框、透明底 — 渐变绿色透过，避免「一大片死白」 */
 .preview-row {
   display: flex;
   justify-content: center;
@@ -301,7 +349,7 @@ onBeforeUnmount(() => {
   width: 512px;
   height: 256px;
   flex-shrink: 0;
-  background: transparent;
+  background: #1a1a1a;
   border: none;
   outline: none;
   box-shadow: none;
@@ -322,17 +370,6 @@ onBeforeUnmount(() => {
   z-index: 1;
 }
 
-.video-stream {
-  position: absolute;
-  inset: 0;
-  width: 100%;
-  height: 100%;
-  object-fit: contain;
-  z-index: 2;
-  pointer-events: none;
-  background: #1a1a1a;
-}
-
 .video-status {
   position: relative;
   z-index: 3;
@@ -346,14 +383,78 @@ onBeforeUnmount(() => {
   }
 }
 
+/* 插件 HWND 锚点：屏外，不影响 WHEP 画面与按钮点击 */
+.hik-talk-anchor {
+  position: fixed;
+  left: -10000px;
+  top: -10000px;
+  width: 160px;
+  height: 90px;
+  overflow: hidden;
+  pointer-events: none;
+  opacity: 0;
+}
+
+.hik-iframe-fs {
+  position: fixed;
+  inset: 0;
+  width: 100vw;
+  height: 100vh;
+  border: 0;
+  margin: 0;
+  padding: 0;
+  background: transparent;
+  pointer-events: none;
+  z-index: 1001;
+}
+
 .tool-row {
   display: flex;
   align-items: center;
   flex-shrink: 0;
   padding: 0;
-  /* 整行再下移一些 */
   margin: 28px 0 0;
   min-height: 32px;
+}
+
+.btn-talk {
+  flex-shrink: 0;
+  margin-left: 8px;
+  min-width: 72px;
+  padding: 4px 10px;
+  border: none;
+  border-radius: 4px;
+  background: #059669;
+  color: #ddd;
+  font-size: 13px;
+  font-weight: 700;
+  font-family: inherit;
+  cursor: pointer;
+
+  &.on {
+    background: #d97706;
+  }
+
+  &:hover:not(:disabled) {
+    color: #fff;
+  }
+
+  &:disabled {
+    opacity: 0.55;
+    cursor: not-allowed;
+  }
+}
+
+.talk-hint {
+  flex-shrink: 0;
+  margin-left: 8px;
+  font-size: 12px;
+  color: #059669;
+  white-space: nowrap;
+
+  &.err {
+    color: #c0392b;
+  }
 }
 
 .bottom-row {
@@ -383,9 +484,6 @@ onBeforeUnmount(() => {
 .sp-220 {
   width: 220px;
 }
-.sp-300 {
-  width: 300px;
-}
 
 .flex-2 {
   flex: 2;
@@ -393,7 +491,7 @@ onBeforeUnmount(() => {
 }
 
 .btn-refresh {
-  width: 28px; /* 24×1.15 */
+  width: 28px;
   height: 28px;
   padding: 0;
   border: none;
@@ -420,17 +518,15 @@ onBeforeUnmount(() => {
   }
 }
 
-/* stretch 3 — 字号 ×1.15 */
 .img-info {
   flex: 3;
   min-width: 200px;
-  font-size: 14.95px; /* 13×1.15 */
+  font-size: 14.95px;
   color: #666;
   word-break: break-word;
   padding: 0 4px;
 }
 
-/* stretch 3 — 相对原 10px ×1.4，加黑 */
 .warning-text {
   flex: 3;
   font-size: 14px;
