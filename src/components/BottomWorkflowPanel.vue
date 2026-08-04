@@ -22,6 +22,10 @@ const emit = defineEmits<{
 
   workflowClick: [key: WorkflowStepKey]
 
+  talkClick: []
+
+  dmTempClick: []
+
 }>()
 
 </script>
@@ -36,7 +40,10 @@ const emit = defineEmits<{
 
     <TruckScene :distance="distance" />
 
-    <HardwareStatusBar />
+    <HardwareStatusBar
+      @talk-click="emit('talkClick')"
+      @dm-temp-click="emit('dmTempClick')"
+    />
 
   </div>
 

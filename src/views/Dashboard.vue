@@ -11,6 +11,7 @@ import PreviewButton from '@/components/PreviewButton.vue'
 import BottomWorkflowPanel from '@/components/BottomWorkflowPanel.vue'
 import type { WorkflowStepKey } from '@/components/WorkflowIcons.vue'
 import BookingDialog from '@/modules/booking/BookingDialog.vue'
+import TalkDialog from '@/components/TalkDialog.vue'
 import AgriculturalSelect from '@/components/AgriculturalSelect.vue'
 import LicensePlateEdit from '@/components/LicensePlateEdit.vue'
 import CarSizeDialog from '@/components/CarSizeDialog.vue'
@@ -41,6 +42,8 @@ const showAiStatus = ref(false)
 const showDeviceStatus = ref(false)
 const showUserMgr = ref(false)
 const showUsrMgrDenied = ref(false)
+/** 可视对讲 — 对齐 Qt TalkDialog（底部喇叭按钮） */
+const showTalkDialog = ref(false)
 /** 对齐 Qt：弹窗贴在对应按钮下方 */
 const plcAnchor = ref<{ left: number; top: number } | null>(null)
 const aiAnchor = ref<{ left: number; top: number } | null>(null)
@@ -1173,6 +1176,7 @@ const anyDialogOpen = computed(
             :booking-active="workflow.bookingActive"
             :distance="workflow.distance"
             @workflow-click="onWorkflowClick"
+            @talk-click="showTalkDialog = true"
           />
         </div>
       </section>
@@ -1331,6 +1335,12 @@ const anyDialogOpen = computed(
       @close="bookingStore.closeDialog()"
       @accept="onBookingAccept"
       @reject="onBookingReject"
+    />
+
+    <!-- 可视对讲 — 对齐 TalkDialog（预约弹窗右半视频独立出来） -->
+    <TalkDialog
+      v-if="showTalkDialog"
+      @close="showTalkDialog = false"
     />
 
     <!-- 农产品选择弹窗 -->
