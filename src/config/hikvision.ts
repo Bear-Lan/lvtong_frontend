@@ -5,7 +5,7 @@
  * 现场约定：
  * - camera1：球机（带云台）
  * - camera2：普通枪机（车顶/车头/车尾）
- * - camera5：预约 / 可视对讲（WHEP 画面 + 插件对讲）
+ * - camera4：预约 / 可视对讲（WHEP 画面 + 插件对讲）
  */
 
 /** 与官方包实际落盘路径一致（整包放在 public/hikvision/codebase 下） */
@@ -23,7 +23,7 @@ export const CAMERA_DEVICE_ID: Record<string, string> = {
   车顶相机: 'camera2',
   车头相机: 'camera2',
   车尾相机: 'camera2',
-  预约相机: 'camera5',
+  预约相机: 'camera4',
   球机: 'camera1',
 }
 
@@ -31,7 +31,7 @@ export const CAMERA_DEVICE_ID: Record<string, string> = {
 export const DEFAULT_GUN_DEVICE_ID = 'camera2'
 
 /** 预约弹窗右侧 / 可视对讲：devices.device_id */
-export const TALK_CAMERA_DEVICE_ID = 'camera5'
+export const TALK_CAMERA_DEVICE_ID = 'camera4'
 
 /** 已接入的相机 Tab */
 export const HIK_ENABLED_CAMERAS = [

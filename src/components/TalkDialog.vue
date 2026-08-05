@@ -1,7 +1,7 @@
 <script setup lang="ts">
 /**
  * 可视对讲 — 对齐 Qt TalkDialog.ui / TalkDialog.cpp
- * camera5 海康插件预览 + 自动对讲（对齐 lvtong_voice/chat）
+ * camera4 海康插件预览 + 自动对讲（对齐 lvtong_voice/chat）
  */
 import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useHikvisionPlayer } from '@/composables/useHikvisionPlayer'

@@ -1,7 +1,7 @@
 <script setup lang="ts">
 /**
  * 预约处理 — 1:1 对齐 Qt OrderDialog.ui / OrderDialog.cpp
- * 右侧：WHEP 看画面（cam5）+ 海康插件只做对讲（HWND 屏外）
+ * 右侧：WHEP 看画面（cam4）+ 海康插件只做对讲（HWND 屏外）
  */
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import ConfirmDialog from './components/ConfirmDialog.vue'
@@ -42,7 +42,7 @@ const {
   confirmYes,
 } = useBookingDialog()
 
-// ---- 画面：MediaMTX WHEP（camera5 / cam5）----
+// ---- 画面：MediaMTX WHEP（camera4 / cam4）----
 const liveVideoRef = ref<HTMLVideoElement | null>(null)
 const {
   status: videoStatus,
