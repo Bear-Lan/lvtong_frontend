@@ -24,6 +24,12 @@ export default defineConfig({
         changeOrigin: true,
         rewrite: (path) => path.replace(/^\/mtx/, ''),
       },
+      // VisualSurveillance WebStreamDemo（MJPEG / 状态，:8765）
+      '/vs': {
+        target: 'http://127.0.0.1:8765',
+        changeOrigin: true,
+        rewrite: (path) => path.replace(/^\/vs/, ''),
+      },
       // flask_backend HTTP 8080（HTTPS 跑 8081 给移动 app，Vite 走 HTTP）
       '/api': {
         target: 'http://localhost:8080',

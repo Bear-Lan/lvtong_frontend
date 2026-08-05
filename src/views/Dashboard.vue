@@ -12,6 +12,7 @@ import BottomWorkflowPanel from '@/components/BottomWorkflowPanel.vue'
 import type { WorkflowStepKey } from '@/components/WorkflowIcons.vue'
 import BookingDialog from '@/modules/booking/BookingDialog.vue'
 import TalkDialog from '@/components/TalkDialog.vue'
+import DangerZoneDialog from '@/components/DangerZoneDialog.vue'
 import AgriculturalSelect from '@/components/AgriculturalSelect.vue'
 import LicensePlateEdit from '@/components/LicensePlateEdit.vue'
 import CarSizeDialog from '@/components/CarSizeDialog.vue'
@@ -29,8 +30,7 @@ import type { BookingAcceptPayload, BookingComingPayload } from '@/modules/booki
 import { useRouter } from 'vue-router'
 import { toApiUrl, toStoragePath, joinImagePaths } from '@/utils/imagePath'
 import { processImage } from '@/utils/imageProcess'
-import { useWhepPlayer } from '@/composables/useWhepPlayer'
-import { DEFAULT_WHEP_URL } from '@/config/liveVideo'
+import { LIVE_MJPEG_URL, LIVE_VS_STATUS_URL } from '@/config/liveVideo'
 const auth = useAuthStore()
 const wsStore = useWsStore()
 const bookingStore = useBookingStore()
@@ -44,6 +44,8 @@ const showUserMgr = ref(false)
 const showUsrMgrDenied = ref(false)
 /** 可视对讲 — 对齐 Qt TalkDialog（底部喇叭按钮） */
 const showTalkDialog = ref(false)
+/** 危险区域设置（实时视频栏入口） */
+const showDangerZone = ref(false)
 /** 对齐 Qt：弹窗贴在对应按钮下方 */
 const plcAnchor = ref<{ left: number; top: number } | null>(null)
 const aiAnchor = ref<{ left: number; top: number } | null>(null)
@@ -374,46 +376,94 @@ type CaptureKey = (typeof captureButtons)[number]['key']
 const captureDialog = ref<CaptureKind | null>(null)
 const showLicenseDialog = ref(false)
 
-// ---- 实时视频：MediaMTX WHEP ----
-const liveVideoRef = ref<HTMLVideoElement | null>(null)
-const {
-  status: liveVideoStatus,
-  error: liveVideoError,
-  play: playLiveVideo,
-  stop: stopLiveVideo,
-} = useWhepPlayer()
+// ---- 实时视频：VisualSurveillance MJPEG（camera4，本机 WebStreamDemo）----
+/** MJPEG 地址；带 t= 便于断线后强制重连 */
+const liveMjpegSrc = ref(`${LIVE_MJPEG_URL}?t=${Date.now()}`)
+const liveVideoStatus = ref<'connecting' | 'playing' | 'error'>('connecting')
+const liveVideoError = ref('')
 
 let liveVideoRetryTimer: number | undefined
+let liveStatusPollTimer: number | undefined
 
 const videoHint = computed(() => {
   if (liveVideoError.value) return liveVideoError.value
   if (liveVideoStatus.value === 'connecting') return '连接中…'
   if (liveVideoStatus.value === 'playing') return ''
-  if (liveVideoStatus.value === 'failed' || liveVideoStatus.value === 'disconnected') {
-    return '连接中断'
-  }
   if (liveVideoStatus.value === 'error') return liveVideoError.value || '实时视频连接失败'
   return '准备播放…'
 })
 
-async function startLiveVideo() {
-  const el = liveVideoRef.value
-  if (!el) return
+function bumpLiveMjpeg() {
+  liveMjpegSrc.value = `${LIVE_MJPEG_URL}?t=${Date.now()}`
+}
+
+function onLiveMjpegLoad() {
+  liveVideoStatus.value = 'playing'
+  liveVideoError.value = ''
+}
+
+function onLiveMjpegError() {
+  liveVideoStatus.value = 'error'
+  liveVideoError.value =
+    '实时视频不可用（请确认已启动 VisualSurveillance 网页版 WebStreamDemo :8765）'
+  scheduleLiveVideoRetry()
+}
+
+async function pollLiveVsStatus() {
   try {
-    await playLiveVideo({ video: el, whepUrl: DEFAULT_WHEP_URL })
+    const controller = new AbortController()
+    const t = window.setTimeout(() => controller.abort(), 2500)
+    const res = await fetch(LIVE_VS_STATUS_URL, {
+      cache: 'no-store',
+      signal: controller.signal,
+    })
+    window.clearTimeout(t)
+    if (!res.ok) throw new Error('status http ' + res.status)
+    const st = (await res.json()) as { connection?: string; error?: string }
+    if (st.error) {
+      liveVideoError.value = String(st.error)
+    }
+    if (st.connection && st.connection !== 'running' && st.connection !== 'ok') {
+      // 仍可能有 mjpg 出画；仅作提示，不强制 error
+      if (liveVideoStatus.value !== 'playing') {
+        liveVideoStatus.value = 'connecting'
+      }
+    }
   } catch {
-    scheduleLiveVideoRetry()
+    if (liveVideoStatus.value !== 'playing') {
+      liveVideoStatus.value = 'error'
+      liveVideoError.value =
+        '检测服务未就绪（请运行 启动网页版.bat，端口 8765）'
+    }
   }
+}
+
+function startLiveVideo() {
+  liveVideoStatus.value = 'connecting'
+  liveVideoError.value = ''
+  bumpLiveMjpeg()
+  void pollLiveVsStatus()
+  window.clearInterval(liveStatusPollTimer)
+  liveStatusPollTimer = window.setInterval(() => {
+    void pollLiveVsStatus()
+  }, 5000)
+}
+
+function stopLiveVideo() {
+  window.clearTimeout(liveVideoRetryTimer)
+  window.clearInterval(liveStatusPollTimer)
+  liveStatusPollTimer = undefined
+  liveVideoStatus.value = 'connecting'
 }
 
 function scheduleLiveVideoRetry() {
   window.clearTimeout(liveVideoRetryTimer)
   liveVideoRetryTimer = window.setTimeout(() => {
-    void startLiveVideo()
+    startLiveVideo()
   }, 3000)
 }
 
-/** 框图裁切预览（叠在 WebRTC 视频之上；删框后仍见直播） */
+/** 框图裁切预览（叠在直播画面之上；来自车身/透视框图，非 MJPEG 截帧） */
 const liveCropPreviewUrl = ref('')
 const bodyPcPanelRef = ref<{ clearBoxes: () => void } | null>(null)
 const xrayBoxPanelRef = ref<{ clearBoxes: () => void } | null>(null)
@@ -431,6 +481,7 @@ function onXrayBoxCrop(dataUrl: string) {
  *    让 UI 立即可见；提交时会由 onSubmitConfirmYes 通过 imagePath 工具归一或上传
  *  - 同步刷新 captureThumbs.goods（最后一张作为缩略图）
  *  - 顺手清掉预览区，回到正常实时视频占位
+ *  - 注意：不对 MJPEG 直播帧做截帧，裁切仅来自车身/透视框图
  */
 function onConfirmCropToGoods() {
   if (!liveCropPreviewUrl.value) return
@@ -1044,14 +1095,13 @@ onMounted(async () => {
   setupWS()
   document.addEventListener('click', onXrayDocClick)
   await nextTick()
-  void startLiveVideo()
+  startLiveVideo()
 })
 
 onUnmounted(() => {
   document.removeEventListener('click', onXrayDocClick)
   window.clearTimeout(xrayApplyTimer)
-  window.clearTimeout(liveVideoRetryTimer)
-  void stopLiveVideo()
+  stopLiveVideo()
   wsStore.disconnect()
 })
 
@@ -1062,6 +1112,8 @@ const anyDialogOpen = computed(
     showHistory.value ||
     showPlcControl.value ||
     showAiStatus.value ||
+    showTalkDialog.value ||
+    showDangerZone.value ||
     showDeviceStatus.value ||
     showUserMgr.value ||
     showUsrMgrDenied.value ||
@@ -1189,6 +1241,15 @@ const anyDialogOpen = computed(
             <img src="/assets/img/live_video.png" class="panel-icon" alt="" />
             <span class="panel-title">实时视频</span>
             <button
+              type="button"
+              class="header-icon-btn"
+              title="危险区域设置"
+              @click="showDangerZone = true"
+            >
+              <img src="/assets/img/a_plc_yellow.png" alt="危险区域" />
+            </button>
+            <button
+              type="button"
               class="header-icon-btn"
               :class="{ disabled: !liveCropPreviewUrl }"
               :title="liveCropPreviewUrl ? '保存到货物图' : '当前无裁切预览'"
@@ -1199,12 +1260,12 @@ const anyDialogOpen = computed(
             </button>
           </div>
           <div class="video-area">
-            <video
-              ref="liveVideoRef"
-              class="live-webrtc"
-              muted
-              autoplay
-              playsinline
+            <img
+              :src="liveMjpegSrc"
+              class="live-mjpeg"
+              alt="实时视频"
+              @load="onLiveMjpegLoad"
+              @error="onLiveMjpegError"
             />
             <img
               v-if="liveCropPreviewUrl"
@@ -1341,6 +1402,11 @@ const anyDialogOpen = computed(
     <TalkDialog
       v-if="showTalkDialog"
       @close="showTalkDialog = false"
+    />
+
+    <DangerZoneDialog
+      v-if="showDangerZone"
+      @close="showDangerZone = false"
     />
 
     <!-- 农产品选择弹窗 -->
@@ -1505,7 +1571,7 @@ const anyDialogOpen = computed(
       @close="stopErrorVisible = false"
     />
 
-    <!-- 主页实时视频：MediaMTX WHEP <video>，无海康 iframe -->
+    <!-- 主页实时视频：VisualSurveillance MJPEG；裁切叠层来自车身/透视框图（非 MJPEG 截帧） -->
   </div>
 </template>
 
@@ -1764,7 +1830,8 @@ const anyDialogOpen = computed(
   overflow: hidden;
 }
 
-.live-webrtc {
+.live-webrtc,
+.live-mjpeg {
   position: absolute;
   inset: 0;
   width: 100%;
