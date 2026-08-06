@@ -30,7 +30,11 @@ import type { BookingAcceptPayload, BookingComingPayload } from '@/modules/booki
 import { useRouter } from 'vue-router'
 import { toApiUrl, toStoragePath, joinImagePaths } from '@/utils/imagePath'
 import { processImage } from '@/utils/imageProcess'
-import { LIVE_MJPEG_URL, LIVE_VS_STATUS_URL } from '@/config/liveVideo'
+import {
+  LIVE_MJPEG_URL,
+  LIVE_RECONNECT_PATH,
+  LIVE_STATUS_PATH,
+} from '@/config/liveVideo'
 const auth = useAuthStore()
 const wsStore = useWsStore()
 const bookingStore = useBookingStore()
@@ -376,11 +380,11 @@ type CaptureKey = (typeof captureButtons)[number]['key']
 const captureDialog = ref<CaptureKind | null>(null)
 const showLicenseDialog = ref(false)
 
-// ---- 实时视频：VisualSurveillance MJPEG（camera4，本机 WebStreamDemo）----
-/** MJPEG 地址；带 t= 便于断线后强制重连 */
+// ---- 实时视频：multipart MJPEG（含 YOLO 检测框叠加）----
 const liveMjpegSrc = ref(`${LIVE_MJPEG_URL}?t=${Date.now()}`)
 const liveVideoStatus = ref<'connecting' | 'playing' | 'error'>('connecting')
 const liveVideoError = ref('')
+const liveReconnecting = ref(false)
 
 let liveVideoRetryTimer: number | undefined
 let liveStatusPollTimer: number | undefined
@@ -403,28 +407,31 @@ function onLiveMjpegLoad() {
 }
 
 function onLiveMjpegError() {
+  // 偶发坏帧不要立刻整路重连（会灰屏）；仅在未出画时重试
+  if (liveVideoStatus.value === 'playing') return
   liveVideoStatus.value = 'error'
-  liveVideoError.value =
-    '实时视频不可用（请确认已启动 VisualSurveillance 网页版 WebStreamDemo :8765）'
+  liveVideoError.value = '实时视频不可用（请确认后端已启动内置检测服务）'
   scheduleLiveVideoRetry()
 }
 
-async function pollLiveVsStatus() {
+async function pollLiveStatus() {
   try {
-    const controller = new AbortController()
-    const t = window.setTimeout(() => controller.abort(), 2500)
-    const res = await fetch(LIVE_VS_STATUS_URL, {
-      cache: 'no-store',
-      signal: controller.signal,
-    })
-    window.clearTimeout(t)
-    if (!res.ok) throw new Error('status http ' + res.status)
-    const st = (await res.json()) as { connection?: string; error?: string }
-    if (st.error) {
+    const res = await request<{
+      connection?: string
+      error?: string
+    }>(LIVE_STATUS_PATH, { timeout: 2500 })
+    const st = res.data || {}
+    if (st.error && liveVideoStatus.value !== 'playing') {
       liveVideoError.value = String(st.error)
     }
-    if (st.connection && st.connection !== 'running' && st.connection !== 'ok') {
-      // 仍可能有 mjpg 出画；仅作提示，不强制 error
+    if (
+      st.connection &&
+      st.connection !== 'connected' &&
+      st.connection !== 'running' &&
+      st.connection !== 'ok' &&
+      st.connection !== 'starting' &&
+      st.connection !== 'connecting'
+    ) {
       if (liveVideoStatus.value !== 'playing') {
         liveVideoStatus.value = 'connecting'
       }
@@ -432,9 +439,33 @@ async function pollLiveVsStatus() {
   } catch {
     if (liveVideoStatus.value !== 'playing') {
       liveVideoStatus.value = 'error'
-      liveVideoError.value =
-        '检测服务未就绪（请运行 启动网页版.bat，端口 8765）'
+      liveVideoError.value = '实时视频服务未就绪'
     }
+  }
+}
+
+async function reconnectLiveVideo() {
+  if (liveReconnecting.value) return
+  liveReconnecting.value = true
+  liveVideoStatus.value = 'connecting'
+  liveVideoError.value = ''
+  try {
+    // 先软刷新 MJPEG；仅当流真挂了才硬重启 worker
+    bumpLiveMjpeg()
+    const res = await request<{ connection?: string }>(LIVE_STATUS_PATH, {
+      timeout: 2500,
+    })
+    const conn = res.data?.connection || ''
+    if (!['connected', 'connecting', 'starting'].includes(conn)) {
+      await request(LIVE_RECONNECT_PATH, { method: 'POST', timeout: 15000 })
+      bumpLiveMjpeg()
+    }
+  } catch (e: unknown) {
+    liveVideoError.value = e instanceof Error ? e.message : '重连失败'
+    bumpLiveMjpeg()
+  } finally {
+    void pollLiveStatus()
+    liveReconnecting.value = false
   }
 }
 
@@ -442,10 +473,10 @@ function startLiveVideo() {
   liveVideoStatus.value = 'connecting'
   liveVideoError.value = ''
   bumpLiveMjpeg()
-  void pollLiveVsStatus()
+  void pollLiveStatus()
   window.clearInterval(liveStatusPollTimer)
   liveStatusPollTimer = window.setInterval(() => {
-    void pollLiveVsStatus()
+    void pollLiveStatus()
   }, 5000)
 }
 
@@ -460,7 +491,7 @@ function scheduleLiveVideoRetry() {
   window.clearTimeout(liveVideoRetryTimer)
   liveVideoRetryTimer = window.setTimeout(() => {
     startLiveVideo()
-  }, 3000)
+  }, 5000)
 }
 
 /** 框图裁切预览（叠在直播画面之上；来自车身/透视框图，非 MJPEG 截帧） */
@@ -1251,6 +1282,15 @@ const anyDialogOpen = computed(
             <button
               type="button"
               class="header-icon-btn"
+              title="重新连接实时视频"
+              :disabled="liveReconnecting"
+              @click="reconnectLiveVideo"
+            >
+              <span class="reconnect-label">{{ liveReconnecting ? '…' : '↻' }}</span>
+            </button>
+            <button
+              type="button"
+              class="header-icon-btn"
               :class="{ disabled: !liveCropPreviewUrl }"
               :title="liveCropPreviewUrl ? '保存到货物图' : '当前无裁切预览'"
               :disabled="!liveCropPreviewUrl"
@@ -1710,6 +1750,17 @@ const anyDialogOpen = computed(
   img {
     width: 24px;
     height: 24px;
+  }
+  .reconnect-label {
+    width: 24px;
+    height: 24px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 18px;
+    font-weight: 700;
+    color: #2c3e50;
+    line-height: 1;
   }
   &:disabled {
     opacity: 0.4;

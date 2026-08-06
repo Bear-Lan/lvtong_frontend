@@ -24,11 +24,18 @@ export default defineConfig({
         changeOrigin: true,
         rewrite: (path) => path.replace(/^\/mtx/, ''),
       },
-      // VisualSurveillance WebStreamDemo（MJPEG / 状态，:8765）
-      '/vs': {
-        target: 'http://127.0.0.1:8765',
+      // 实时视频帧/流：关闭超时，避免长连接/轮询被代理掐断
+      '/api/live/frame.jpg': {
+        target: 'http://localhost:8080',
         changeOrigin: true,
-        rewrite: (path) => path.replace(/^\/vs/, ''),
+        timeout: 0,
+        proxyTimeout: 0,
+      },
+      '/api/live/stream.mjpg': {
+        target: 'http://localhost:8080',
+        changeOrigin: true,
+        timeout: 0,
+        proxyTimeout: 0,
       },
       // flask_backend HTTP 8080（HTTPS 跑 8081 给移动 app，Vite 走 HTTP）
       '/api': {
