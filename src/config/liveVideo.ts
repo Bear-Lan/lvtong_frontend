@@ -29,6 +29,11 @@ export const LIVE_RECONNECT_PATH =
   (import.meta.env.VITE_LIVE_RECONNECT_PATH as string | undefined)?.trim() ||
   '/live/reconnect'
 
+/** 手动启动检测服务 */
+export const LIVE_ENSURE_PATH =
+  (import.meta.env.VITE_LIVE_ENSURE_PATH as string | undefined)?.trim() ||
+  '/live/ensure'
+
 /** 区域只读列表 */
 export const LIVE_ZONES_PATH =
   (import.meta.env.VITE_LIVE_ZONES_PATH as string | undefined)?.trim() || '/live/zones'

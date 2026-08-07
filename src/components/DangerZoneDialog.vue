@@ -8,6 +8,7 @@ import { computed, nextTick, onMounted, onUnmounted, ref } from 'vue'
 import { request } from '@/api/request'
 import {
   LIVE_ALARMS_PATH,
+  LIVE_ENSURE_PATH,
   LIVE_FRAME_URL,
   LIVE_RECONNECT_PATH,
   LIVE_STATUS_PATH,
@@ -45,6 +46,7 @@ type LiveStatus = {
   error?: string
   device_id?: string
   device_ip?: string
+  running?: boolean
 }
 
 const loading = ref(true)
@@ -120,8 +122,14 @@ async function onReconnect() {
   if (reconnecting.value) return
   reconnecting.value = true
   try {
-    await request(LIVE_RECONNECT_PATH, { method: 'POST', timeout: 15000 })
+    // 未运行：手动 ensure；已运行：reconnect
+    if (!status.value.running) {
+      await request(LIVE_ENSURE_PATH, { method: 'POST', timeout: 15000 })
+    } else {
+      await request(LIVE_RECONNECT_PATH, { method: 'POST', timeout: 15000 })
+    }
     await refreshStatus()
+    await loadReferenceFrame()
   } catch {
     /* status 轮询会反映结果 */
   } finally {
@@ -416,7 +424,15 @@ onUnmounted(() => {
               :disabled="reconnecting"
               @click="onReconnect"
             >
-              {{ reconnecting ? '重连中…' : '重新连接' }}
+              {{
+                reconnecting
+                  ? status.running
+                    ? '重连中…'
+                    : '启动中…'
+                  : status.running
+                    ? '重新连接'
+                    : '启动检测'
+              }}
             </button>
           </div>
         </section>

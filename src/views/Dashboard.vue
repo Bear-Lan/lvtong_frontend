@@ -31,6 +31,7 @@ import { useRouter } from 'vue-router'
 import { toApiUrl, toStoragePath, joinImagePaths } from '@/utils/imagePath'
 import { processImage } from '@/utils/imageProcess'
 import {
+  LIVE_ENSURE_PATH,
   LIVE_MJPEG_URL,
   LIVE_RECONNECT_PATH,
   LIVE_STATUS_PATH,
@@ -381,16 +382,19 @@ const captureDialog = ref<CaptureKind | null>(null)
 const showLicenseDialog = ref(false)
 
 // ---- 实时视频：multipart MJPEG（含 YOLO 检测框叠加）----
-const liveMjpegSrc = ref(`${LIVE_MJPEG_URL}?t=${Date.now()}`)
-const liveVideoStatus = ref<'connecting' | 'playing' | 'error'>('connecting')
-const liveVideoError = ref('')
+// 检测服务不自动启动：需点右上角 ↻ 调 POST /live/ensure
+const liveMjpegSrc = ref('')
+const liveVideoStatus = ref<'idle' | 'connecting' | 'playing' | 'error'>('idle')
+const liveVideoError = ref('检测未启动，请点击右上角启动')
 const liveReconnecting = ref(false)
+const liveDetectRunning = ref(false)
 
 let liveVideoRetryTimer: number | undefined
 let liveStatusPollTimer: number | undefined
 
 const videoHint = computed(() => {
   if (liveVideoError.value) return liveVideoError.value
+  if (liveVideoStatus.value === 'idle') return '检测未启动，请点击右上角启动'
   if (liveVideoStatus.value === 'connecting') return '连接中…'
   if (liveVideoStatus.value === 'playing') return ''
   if (liveVideoStatus.value === 'error') return liveVideoError.value || '实时视频连接失败'
@@ -407,10 +411,15 @@ function onLiveMjpegLoad() {
 }
 
 function onLiveMjpegError() {
-  // 偶发坏帧不要立刻整路重连（会灰屏）；仅在未出画时重试
+  // 偶发坏帧不要立刻整路重连（会灰屏）；仅在未出画时提示
   if (liveVideoStatus.value === 'playing') return
+  if (!liveDetectRunning.value) {
+    liveVideoStatus.value = 'idle'
+    liveVideoError.value = '检测未启动，请点击右上角启动'
+    return
+  }
   liveVideoStatus.value = 'error'
-  liveVideoError.value = '实时视频不可用（请确认后端已启动内置检测服务）'
+  liveVideoError.value = '实时视频不可用（请点击右上角重试）'
   scheduleLiveVideoRetry()
 }
 
@@ -419,21 +428,32 @@ async function pollLiveStatus() {
     const res = await request<{
       connection?: string
       error?: string
+      running?: boolean
     }>(LIVE_STATUS_PATH, { timeout: 2500 })
     const st = res.data || {}
+    liveDetectRunning.value = !!st.running
+    if (!st.running) {
+      if (liveVideoStatus.value !== 'playing') {
+        liveVideoStatus.value = 'idle'
+        liveVideoError.value = '检测未启动，请点击右上角启动'
+        liveMjpegSrc.value = ''
+      }
+      return
+    }
     if (st.error && liveVideoStatus.value !== 'playing') {
       liveVideoError.value = String(st.error)
     }
+    // 已运行但尚未绑流：自动绑 MJPEG（例如刚 ensure 成功）
     if (
-      st.connection &&
-      st.connection !== 'connected' &&
-      st.connection !== 'running' &&
-      st.connection !== 'ok' &&
-      st.connection !== 'starting' &&
-      st.connection !== 'connecting'
+      liveVideoStatus.value !== 'playing' &&
+      ['connected', 'connecting', 'starting', 'running', 'ok'].includes(
+        st.connection || '',
+      )
     ) {
-      if (liveVideoStatus.value !== 'playing') {
+      if (!liveMjpegSrc.value) {
         liveVideoStatus.value = 'connecting'
+        liveVideoError.value = ''
+        bumpLiveMjpeg()
       }
     }
   } catch {
@@ -450,19 +470,26 @@ async function reconnectLiveVideo() {
   liveVideoStatus.value = 'connecting'
   liveVideoError.value = ''
   try {
-    // 先软刷新 MJPEG；仅当流真挂了才硬重启 worker
-    bumpLiveMjpeg()
-    const res = await request<{ connection?: string }>(LIVE_STATUS_PATH, {
-      timeout: 2500,
-    })
-    const conn = res.data?.connection || ''
-    if (!['connected', 'connecting', 'starting'].includes(conn)) {
-      await request(LIVE_RECONNECT_PATH, { method: 'POST', timeout: 15000 })
+    const res = await request<{ connection?: string; running?: boolean }>(
+      LIVE_STATUS_PATH,
+      { timeout: 2500 },
+    )
+    const st = res.data || {}
+    if (!st.running) {
+      // 未运行：手动启动
+      await request(LIVE_ENSURE_PATH, { method: 'POST', timeout: 15000 })
+      liveDetectRunning.value = true
+      bumpLiveMjpeg()
+    } else {
+      // 已运行：软刷新；连接异常则硬重启
+      const conn = st.connection || ''
+      if (!['connected', 'connecting', 'starting'].includes(conn)) {
+        await request(LIVE_RECONNECT_PATH, { method: 'POST', timeout: 15000 })
+      }
       bumpLiveMjpeg()
     }
   } catch (e: unknown) {
-    liveVideoError.value = e instanceof Error ? e.message : '重连失败'
-    bumpLiveMjpeg()
+    liveVideoError.value = e instanceof Error ? e.message : '启动/重连失败'
   } finally {
     void pollLiveStatus()
     liveReconnecting.value = false
@@ -470,9 +497,10 @@ async function reconnectLiveVideo() {
 }
 
 function startLiveVideo() {
-  liveVideoStatus.value = 'connecting'
-  liveVideoError.value = ''
-  bumpLiveMjpeg()
+  // 进入页面只轮询状态，不自动启动 worker
+  liveVideoStatus.value = 'idle'
+  liveVideoError.value = '检测未启动，请点击右上角启动'
+  liveMjpegSrc.value = ''
   void pollLiveStatus()
   window.clearInterval(liveStatusPollTimer)
   liveStatusPollTimer = window.setInterval(() => {
@@ -484,13 +512,16 @@ function stopLiveVideo() {
   window.clearTimeout(liveVideoRetryTimer)
   window.clearInterval(liveStatusPollTimer)
   liveStatusPollTimer = undefined
-  liveVideoStatus.value = 'connecting'
+  liveVideoStatus.value = 'idle'
+  liveMjpegSrc.value = ''
 }
 
 function scheduleLiveVideoRetry() {
   window.clearTimeout(liveVideoRetryTimer)
   liveVideoRetryTimer = window.setTimeout(() => {
-    startLiveVideo()
+    if (!liveDetectRunning.value) return
+    liveVideoStatus.value = 'connecting'
+    bumpLiveMjpeg()
   }, 5000)
 }
 
@@ -1282,7 +1313,7 @@ const anyDialogOpen = computed(
             <button
               type="button"
               class="header-icon-btn"
-              title="重新连接实时视频"
+              :title="liveDetectRunning ? '重新连接实时视频' : '启动检测服务'"
               :disabled="liveReconnecting"
               @click="reconnectLiveVideo"
             >
@@ -1301,6 +1332,7 @@ const anyDialogOpen = computed(
           </div>
           <div class="video-area">
             <img
+              v-if="liveMjpegSrc"
               :src="liveMjpegSrc"
               class="live-mjpeg"
               alt="实时视频"
@@ -1316,7 +1348,7 @@ const anyDialogOpen = computed(
             <div
               v-if="!liveCropPreviewUrl && liveVideoStatus !== 'playing'"
               class="video-status"
-              :class="{ err: liveVideoStatus === 'error' || !!liveVideoError }"
+              :class="{ err: liveVideoStatus === 'error' || liveVideoStatus === 'idle' || !!liveVideoError }"
             >
               {{ videoHint }}
             </div>
