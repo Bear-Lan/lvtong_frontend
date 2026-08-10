@@ -19,18 +19,23 @@ const props = withDefaults(
   },
 )
 
-const showTruck = computed(() => props.distance > 0)
+/** 有雷达有效距离时显示小车（0 表示尚未收到/空闲） */
+const showTruck = computed(() => props.distance !== 0)
 
 const truckX = computed(() => {
   if (!showTruck.value) return '0%'
+  // 轨迹仍用原生距离定位（与 Qt 虚线坐标一致）
   let x = START_POS_X + (42 - props.distance) * METER_PIX - 32
   if (Math.round(props.distance) === 8) x += 50
   return toPercentX(x)
 })
 
+/** 底部距离文案：直接显示雷达原生距离，不再减 4 */
 const truckLabel = computed(() => {
   if (!showTruck.value) return ''
-  return `${Math.round(props.distance) - 4}m`
+  const d = Number(props.distance)
+  if (!Number.isFinite(d)) return ''
+  return `${d.toFixed(1)}m`
 })
 </script>
 

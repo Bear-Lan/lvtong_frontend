@@ -755,8 +755,8 @@ async function onSubmitConfirmYes() {
 
   // ---- 1. 组装 body（50+ 字段，对齐 Qt VehicleInspection） ----
   // 图片统一交给后端 persist_to_storage 归一：前端只负责把"任何形态的引用"
-  // （/api/images/<rel>、/api/image?path=、绝对路径、相对路径）
-  // 转成"后端能识别的字符串"，具体落盘与改名由后端负责。
+  // （dataUrl、blob、/api/images/<rel>、绝对路径等）原样/可识别地交给后端；
+  // 自动拍与手动拍都先在前端预览，真正落盘与改名在提交时完成。
   const body: Record<string, unknown> = {
     // 业务字段
     plate_number: form.value.plate === '--' ? '' : form.value.plate,
@@ -963,20 +963,28 @@ function setupWS() {
       | undefined
     if (!data?.imageType) return
 
-    // 调度器 /api 自动采集：单张 url
+    // 调度器自动采集 / 手动同逻辑：单张 url（多为 dataUrl，提交时再落盘）
     if (data.url) {
-      const apiUrl = toImageUrl(data.url)
+      const raw = String(data.url)
+      const isInline =
+        raw.startsWith('data:') || raw.startsWith('blob:')
+      // dataUrl/blob 不能拼 ?t=；磁盘 API 路径才做防缓存
+      const apiUrl = toImageUrl(raw)
+      const viewUrl = isInline
+        ? apiUrl
+        : `${apiUrl}${apiUrl.includes('?') ? '&' : '?'}t=${Date.now()}`
       const t = data.imageType
       if (t === 'head' || t === 'tail' || t === 'top' || t === 'goods' || t === 'evidence' || t === 'license') {
-        captureThumbs.value = { ...captureThumbs.value, [t]: apiUrl }
-        if (t === 'top') bodyImageUrls.value.top = apiUrl
-        if (t === 'head') bodyImageUrls.value.body = bodyImageUrls.value.body || apiUrl
+        captureThumbs.value = { ...captureThumbs.value, [t]: viewUrl }
+        // 图像采集(枪机) 与 车身影像(中间 agent) 无关，不要写 bodyImageUrls
       }
-      console.info(`[WS] image_ready: ${t} → ${apiUrl}`)
+      console.info(
+        `[WS] image_ready: ${t} → ${isInline ? `dataUrl(${raw.length} chars)` : viewUrl}`,
+      )
       return
     }
 
-    // mock_back 批量出图
+    // 中间设备 agent / 占位批量出图 → 仅填车身影像、透视影像
     if (!data.urls) return
     if (data.imageType === 'body') {
       if (data.urls['1']) bodyImageUrls.value.body = data.urls['1']
@@ -2022,8 +2030,9 @@ const anyDialogOpen = computed(
 .capture-thumb {
   width: 100%;
   height: 100%;
-  object-fit: fill;
+  object-fit: contain;
   display: block;
+  background: #1a1a1a;
 }
 
 .form-header { padding-left: 20px; }
