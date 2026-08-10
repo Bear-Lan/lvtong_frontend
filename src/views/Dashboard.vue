@@ -603,11 +603,15 @@ function toImageUrl(reference: string | undefined | null): string {
 }
 
 /** 任意弹窗打开时暂停 Dashboard 视频，避免海康原生窗口穿透到弹窗之上 */
+/** 打开采集弹窗时快照初始图，避免父组件重渲染（如雷达距离）生成新数组把弹窗内新拍清掉 */
+const captureDialogInitial = ref<string[]>([])
+
 function onCaptureClick(key: CaptureKey) {
   if (key === 'license') {
     showLicenseDialog.value = true
     return
   }
+  captureDialogInitial.value = captureInitialImages(key)
   captureDialog.value = key
 }
 
@@ -1543,7 +1547,7 @@ const anyDialogOpen = computed(
     <CaptureCameraDialog
       v-if="captureDialog"
       :kind="captureDialog"
-      :initial-images="captureInitialImages(captureDialog)"
+      :initial-images="captureDialogInitial"
       @confirm="(imgs) => onCaptureConfirm(captureDialog!, imgs)"
       @close="captureDialog = null"
     />

@@ -112,8 +112,12 @@ function syncKind() {
 watch(() => props.kind, syncKind)
 watch(
   () => props.initialImages,
-  () => {
-    photos.value = [...(props.initialImages ?? [])].filter(Boolean)
+  (next, prev) => {
+    // 仅内容变化时同步；父组件每次重渲染若给新数组引用，不能把弹窗内新拍清掉
+    const a = next ?? []
+    const b = prev ?? []
+    if (a.length === b.length && a.every((v, i) => v === b[i])) return
+    photos.value = [...a].filter(Boolean)
     selectedIndex.value = 0
   },
 )
