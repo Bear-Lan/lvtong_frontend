@@ -948,16 +948,36 @@ function setupWS() {
     workflow.value.stepMessage = ''
   })
 
-  /** mock_back 推送：受理后 2s 出图，按 imageType 写入对应视图 */
+  /** 图像就绪：兼容
+   *  1) mock_back：{ imageType: body|transparent, urls: {1,2,3} }
+   *  2) flask capture_service：{ imageType: head|tail|top|..., url }
+   */
   wsStore.subscribe('image_ready', (msg) => {
     const data = msg.data as
       | {
-          imageType?: 'body' | 'transparent'
+          imageType?: string
           group?: number
+          url?: string
           urls?: Record<string, string>
         }
       | undefined
-    if (!data?.imageType || !data.urls) return
+    if (!data?.imageType) return
+
+    // 调度器 /api 自动采集：单张 url
+    if (data.url) {
+      const apiUrl = toImageUrl(data.url)
+      const t = data.imageType
+      if (t === 'head' || t === 'tail' || t === 'top' || t === 'goods' || t === 'evidence' || t === 'license') {
+        captureThumbs.value = { ...captureThumbs.value, [t]: apiUrl }
+        if (t === 'top') bodyImageUrls.value.top = apiUrl
+        if (t === 'head') bodyImageUrls.value.body = bodyImageUrls.value.body || apiUrl
+      }
+      console.info(`[WS] image_ready: ${t} → ${apiUrl}`)
+      return
+    }
+
+    // mock_back 批量出图
+    if (!data.urls) return
     if (data.imageType === 'body') {
       if (data.urls['1']) bodyImageUrls.value.body = data.urls['1']
       if (data.urls['2']) bodyImageUrls.value.top = data.urls['2']
