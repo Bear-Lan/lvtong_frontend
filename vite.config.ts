@@ -13,11 +13,6 @@ export default defineConfig({
     port: 5173,
     host: true,
     proxy: {
-      // mock_back（HTTP 8081）
-      '/api/mock': {
-        target: 'http://localhost:8081',
-        changeOrigin: true,
-      },
       // MediaMTX WebRTC / WHEP（lvtong-backend/tools/mediamtx，:8889）
       '/mtx': {
         target: 'http://127.0.0.1:8889',

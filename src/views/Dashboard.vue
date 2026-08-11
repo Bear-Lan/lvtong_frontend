@@ -654,8 +654,6 @@ function onWorkflowClick(key: WorkflowStepKey) {
 }
 
 function onBookingAccept(payload: BookingAcceptPayload) {
-  console.info('[mock_back] onBookingAccept CALLED, payload =', payload)
-  // mock_back 触发已在 useBookingDialog.confirmYes 成功后直接调（避免 emit 链路不稳定）
   bookingStore.applyAccept(payload)
   workflow.value.bookingActive = true
 }
@@ -663,10 +661,6 @@ function onBookingAccept(payload: BookingAcceptPayload) {
 function onBookingReject() {
   bookingStore.applyReject()
   workflow.value.bookingActive = false
-  // 联动 mock_back：驳回后场景重置（车回到 distant 状态）
-  void fetch(`${appConfig.mockApiBaseUrl || ''}/api/mock/reject-booking`, {
-    method: 'POST',
-  }).catch((e) => console.warn('[mock_back] reject-booking 失败:', e))
 }
 
 /** WS 来车/按键预约 → 自动弹窗 */
@@ -692,12 +686,6 @@ function onResetConfirmYes() {
   void request('/booking/reset', { method: 'POST' })
     .then((r) => console.info('[booking] reset 响应:', r.code, r.message))
     .catch((e) => console.warn('[booking] reset 失败:', e))
-  // 通知 mock_back：复位 + 放行下一车次
-  void fetch(`${appConfig.mockApiBaseUrl || ''}/api/mock/booking-submitted`, {
-    method: 'POST',
-  })
-    .then((r) => console.info('[mock_back] reset 响应:', r.status))
-    .catch((e) => console.warn('[mock_back] reset 失败:', e))
 }
 
 function onResetConfirmNo() {
@@ -837,10 +825,6 @@ async function onSubmitConfirmYes() {
       // 通知后端重置
       void request('/booking/reset', { method: 'POST' })
         .catch((e) => console.warn('[booking] reset 失败:', e))
-      // 通知 mock_back：提交完成，复位 + 放行下一车次
-      void fetch(`${appConfig.mockApiBaseUrl || ''}/api/mock/booking-submitted`, {
-        method: 'POST',
-      }).catch((e) => console.warn('[mock_back] booking-submitted 失败:', e))
     } else {
       alert(res.message || '提交失败')
     }
@@ -869,10 +853,17 @@ const showResetConfirmBox = ref(false)
 function setupWS() {
   wsStore.connect()
 
+  let radarLogN = 0
   wsStore.subscribe('radar_distance', (msg) => {
-    const data = msg.data as { distance?: number } | undefined
-    if (data?.distance != null) {
-      workflow.value.distance = data.distance
+    const data = msg.data as { distance?: number; mode?: number } | undefined
+    if (data?.distance != null && Number.isFinite(Number(data.distance))) {
+      const d = Number(data.distance)
+      workflow.value.distance = d
+      // 调试：受理后应持续打印；若没有则后端未推或 WS 未收到
+      radarLogN += 1
+      if (radarLogN === 1 || radarLogN % 20 === 0) {
+        console.info(`[WS] radar_distance #${radarLogN}: ${d}m mode=${data.mode ?? '-'}`)
+      }
     }
   })
 
@@ -1000,7 +991,7 @@ function setupWS() {
       if (data.urls['3']) xrayImageUrls.value.mosaic = data.urls['3']
     }
     console.info(
-      `[mock_back] image_ready: ${data.imageType} group=${data.group} urls=${Object.keys(data.urls).length}`,
+      `[WS] image_ready group: ${data.imageType} group=${data.group} urls=${Object.keys(data.urls).length}`,
     )
   })
 

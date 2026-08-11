@@ -19,8 +19,11 @@ const props = withDefaults(
   },
 )
 
-/** 有雷达有效距离时显示小车（0 表示尚未收到/空闲） */
-const showTruck = computed(() => props.distance !== 0)
+/** 有雷达有效距离时显示小车（<=0 表示尚未收到/已到达终点隐藏） */
+const showTruck = computed(() => {
+  const d = Number(props.distance)
+  return Number.isFinite(d) && d > 0
+})
 
 const truckX = computed(() => {
   if (!showTruck.value) return '0%'
