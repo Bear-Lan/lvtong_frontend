@@ -104,6 +104,39 @@ const canToggleTalk = computed(
   () => talkStatus.value === 'playing' || talking.value,
 )
 
+/** 左侧雷达图是否已在浏览器解码完成 */
+const radarImageReady = ref(false)
+watch(radarImageUrl, () => {
+  radarImageReady.value = false
+})
+
+const videoReady = computed(() => videoStatus.value === 'playing')
+const talkReady = computed(() => talkStatus.value === 'playing' || talking.value)
+const radarReady = computed(
+  () => !!radarImageUrl.value && radarImageReady.value && !loading.value,
+)
+/** 对讲 + 视频 + 左侧图都就绪后才可受理/驳回 */
+const canDecide = computed(
+  () => videoReady.value && talkReady.value && radarReady.value,
+)
+const decideHint = computed(() => {
+  if (canDecide.value || submitting.value) return ''
+  const missing: string[] = []
+  if (!radarReady.value) missing.push('左侧图')
+  if (!videoReady.value) missing.push('视频')
+  if (!talkReady.value) missing.push('对讲')
+  if (!missing.length) return ''
+  return `请等待${missing.join('、')}加载完成后再受理或驳回`
+})
+
+function onRadarImageLoaded() {
+  radarImageReady.value = true
+}
+
+function onRadarImageError() {
+  radarImageReady.value = false
+}
+
 async function handleConfirmYes() {
   try {
     // 受理/驳回前先停 WHEP + 海康对讲，不依赖用户先点「停止对讲」
@@ -136,12 +169,12 @@ function onOverlayClick() {
 }
 
 function onRejectClick() {
-  if (submitting.value) return
+  if (submitting.value || !canDecide.value) return
   requestConfirm('reject')
 }
 
 function onAcceptClick() {
-  if (submitting.value) return
+  if (submitting.value || !canDecide.value) return
   requestConfirm('accept')
 }
 
@@ -174,6 +207,8 @@ onBeforeUnmount(() => {
           :image-url="radarImageUrl"
           :darkness="0"
           always-show-line
+          @loaded="onRadarImageLoaded"
+          @error="onRadarImageError"
         />
         <div class="video-panel">
           <video
@@ -231,6 +266,7 @@ onBeforeUnmount(() => {
       </div>
 
       <p v-if="errorMessage" class="error-tip">{{ errorMessage }}</p>
+      <p v-else-if="decideHint" class="decide-hint">{{ decideHint }}</p>
 
       <div class="bottom-row">
         <span class="sp sp-80" />
@@ -257,7 +293,8 @@ onBeforeUnmount(() => {
         <button
           type="button"
           class="btn-reject"
-          :disabled="submitting"
+          :disabled="submitting || !canDecide"
+          :title="decideHint || '驳回'"
           @click="onRejectClick"
         >
           <img src="/assets/img/a_dismiss.png" alt="" />
@@ -267,7 +304,8 @@ onBeforeUnmount(() => {
         <button
           type="button"
           class="btn-accept"
-          :disabled="submitting"
+          :disabled="submitting || !canDecide"
+          :title="decideHint || '受理'"
           @click="onAcceptClick"
         >
           <img src="/assets/img/a_accept.png" alt="" />
@@ -554,6 +592,12 @@ onBeforeUnmount(() => {
   color: #c0392b;
 }
 
+.decide-hint {
+  margin: 0 24px;
+  font-size: 12px;
+  color: #b45309;
+}
+
 .label-vehicle {
   font-size: 14px;
   color: #2c3e50;
@@ -637,7 +681,7 @@ onBeforeUnmount(() => {
 
   &:disabled {
     opacity: 0.55;
-    cursor: wait;
+    cursor: not-allowed;
   }
 }
 

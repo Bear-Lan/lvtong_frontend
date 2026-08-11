@@ -9,7 +9,7 @@ export interface HistoryRecord {
   goods_name?: string
   load_rate?: number
   operator_name?: string
-  /** 0=正常，1=异常 */
+  /** 0=合格，1=不合格 */
   result_status?: number
   inspection_time?: string
 }

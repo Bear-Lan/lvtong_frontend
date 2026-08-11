@@ -3,7 +3,7 @@
  * 查验记录详情弹窗 — 1:1 对齐 Qt DetailDialog.ui / DetailDialog.cpp
  * 尺寸 1340×960
  * - history：历史记录「查看详情 / 双击」打开，可修改
- * - submit：Dashboard 提交前预览，只读，确认后才真正提交
+ * - submit：Dashboard 提交前预览；业务字段只读，查验结果/不合格类型可改
  */
 import { computed, onMounted, ref, watch } from 'vue'
 import AgriculturalSelect from '@/components/AgriculturalSelect.vue'
@@ -67,7 +67,9 @@ const emit = defineEmits<{
 }>()
 
 const isSubmitMode = computed(() => props.mode === 'submit')
+/** 提交预览：业务字段只读；查验结果/不合格类型单独放开 */
 const readOnly = computed(() => isSubmitMode.value)
+const resultReadOnly = computed(() => false)
 
 const loading = ref(true)
 const saving = ref(false)
@@ -248,7 +250,7 @@ function applyRecord(data: InspectionDetail) {
   reviewerPhone.value = data.reviewer_phone || ''
   // DB 可能存 '' / '1'；下拉 option 是数字 1..5
   groupId.value = Number(data.group_id) || 0
-  // 0=正常，1=异常
+  // 0=合格，1=不合格
   resultStatus.value = Number(data.result_status) === 1 ? 1 : 0
   noPassType.value = data.no_pass_type ?? 0
 }
@@ -367,11 +369,25 @@ function onReviewerChange() {
 }
 
 watch(resultStatus, (v) => {
-  if (v === 0) remark.value = ''
+  if (v === 0) {
+    remark.value = ''
+    noPassType.value = 0
+    return
+  }
+  // 切到不合格：默认选中第一项不合格类型，方便提交确认页直接选原因
+  if (!noPassType.value && noPassTypes.value.length > 0) {
+    noPassType.value = Number(noPassTypes.value[0].code) || 0
+  }
 })
 
 function onConfirmSubmit() {
   if (!isSubmitMode.value) return
+  if (resultStatus.value === 1 && !noPassType.value) {
+    tipOk.value = false
+    tipMessage.value = '请选择不合格类型'
+    tipVisible.value = true
+    return
+  }
   emit('confirm', {
     result_status: resultStatus.value,
     reviewer_phone: reviewerPhone.value,
@@ -654,14 +670,15 @@ onMounted(async () => {
                 <select
                   v-model.number="resultStatus"
                   class="uline-select result-select"
-                  :disabled="readOnly"
+                  :disabled="resultReadOnly"
                 >
                   <option v-for="r in RESULT_OPTIONS" :key="r.value" :value="r.value">{{ r.label }}</option>
                 </select>
               </div>
               <div v-if="showNoPass" class="field-row result-row">
                 <label class="tag-red">不合格类型</label>
-                <select v-model="noPassType" class="uline-select" :disabled="readOnly">
+                <select v-model.number="noPassType" class="uline-select" :disabled="resultReadOnly">
+                  <option :value="0" disabled>请选择不合格类型</option>
                   <option v-for="n in noPassTypes" :key="n.code" :value="Number(n.code)">
                     {{ n.code }}:{{ n.value }}
                   </option>

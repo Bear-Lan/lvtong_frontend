@@ -14,6 +14,8 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   'update:linePosition': [value: number]
+  loaded: []
+  error: []
 }>()
 
 const dragging = ref(false)
@@ -60,6 +62,14 @@ watch(
     dragging.value = false
   },
 )
+
+function onImageLoad() {
+  emit('loaded')
+}
+
+function onImageError() {
+  emit('error')
+}
 </script>
 
 <template>
@@ -72,7 +82,14 @@ watch(
     @pointerup="onPointerUp"
     @pointercancel="onPointerUp"
   >
-    <img v-if="imageUrl" :src="imageUrl" class="radar-image" alt="雷达来车图" />
+    <img
+      v-if="imageUrl"
+      :src="imageUrl"
+      class="radar-image"
+      alt="雷达来车图"
+      @load="onImageLoad"
+      @error="onImageError"
+    />
     <span v-else class="radar-placeholder">雷达测量来车信息区域</span>
 
     <template v-if="showLine">

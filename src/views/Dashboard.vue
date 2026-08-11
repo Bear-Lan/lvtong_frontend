@@ -3,6 +3,7 @@ import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useAuthStore } from '@/stores/useAuthStore'
 import { useWsStore } from '@/stores/useWsStore'
 import { request } from '@/api/request'
+import { getCurrentUserApi } from '@/api/auth'
 
 import AppHeader from '@/components/AppHeader.vue'
 import type { ToolAnchor } from '@/components/AppHeader.vue'
@@ -813,11 +814,26 @@ function buildSubmitPreview(): InspectionDetail {
   }
 }
 
-function onConfirm() {
+async function onConfirm() {
   /** 对齐 LvTongPro::onConfirmClicked：先弹查验记录预览，再写库 */
   if (!form.value.goods) {
     alert('请选择农产品类型')
     return
+  }
+  // 打开确认页前刷新登录用户 phone/groupId，保证查验/班组能回显
+  try {
+    const me = await getCurrentUserApi()
+    if (me.code === 0 && me.data && auth.user) {
+      auth.user = {
+        ...auth.user,
+        phone: me.data.phone || auth.user.phone,
+        realName: me.data.realName || auth.user.realName,
+        role: me.data.role ?? auth.user.role,
+        groupId: me.data.groupId ?? auth.user.groupId,
+      }
+    }
+  } catch {
+    /* 刷新失败仍用本地缓存用户信息 */
   }
   submitPreview.value = buildSubmitPreview()
   showSubmitPreview.value = true
