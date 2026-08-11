@@ -30,8 +30,8 @@ export function toApiUrl(reference: string | undefined | null): string {
   const s = String(reference).trim()
   if (!s) return ''
 
-  // 1. 已是 /api/images/<rel>
-  if (s.startsWith('/api/images/')) return s
+  // 1. 已是 /api/images/<rel> 或预览临时图 /api/temp-images/<id>
+  if (s.startsWith('/api/images/') || s.startsWith('/api/temp-images/')) return s
 
   // 2. ?path=<encoded> 形态
   if (s.startsWith('/api/image') || s.includes('?path=')) {
@@ -79,6 +79,9 @@ export function toStoragePath(reference: string | undefined | null): string {
 
   // /api/images/<rel>：剥前缀变相对（后端会拼 IMAGE_STORAGE_ROOT）
   if (s.startsWith('/api/images/')) return s.slice('/api/images/'.length)
+
+  // /api/temp-images/<id>：原样交给后端 persist_to_storage（从内存缓存落正式库）
+  if (s.startsWith('/api/temp-images/')) return s
 
   // 兜底：原样返回（绝对路径由后端检查/复制）
   return s
