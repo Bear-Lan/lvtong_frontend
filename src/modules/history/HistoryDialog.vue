@@ -106,8 +106,8 @@ function formatLoadRate(rate?: number) {
 }
 
 function resultText(status?: number) {
-  // 对齐 Qt：resultStatus == 1 → 合格
-  return status === 1 ? '合格' : '不合格'
+  // 0=正常，1=异常（勿与旧 Qt 1/2 混淆）
+  return Number(status) === 1 ? '异常' : '正常'
 }
 
 function vehicleTypeText(row: HistoryRecord) {

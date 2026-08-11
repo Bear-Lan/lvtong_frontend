@@ -31,7 +31,11 @@ export function toApiUrl(reference: string | undefined | null): string {
   if (!s) return ''
 
   // 1. 已是 /api/images/<rel> 或预览临时图 /api/temp-images/<id>
-  if (s.startsWith('/api/images/') || s.startsWith('/api/temp-images/')) return s
+  //    显示侧可能带 ?t= 防缓存，提交/归一时要剥掉
+  if (s.startsWith('/api/images/') || s.startsWith('/api/temp-images/')) {
+    const q = s.indexOf('?')
+    return q >= 0 ? s.slice(0, q) : s
+  }
 
   // 2. ?path=<encoded> 形态
   if (s.startsWith('/api/image') || s.includes('?path=')) {
@@ -78,10 +82,17 @@ export function toStoragePath(reference: string | undefined | null): string {
   }
 
   // /api/images/<rel>：剥前缀变相对（后端会拼 IMAGE_STORAGE_ROOT）
-  if (s.startsWith('/api/images/')) return s.slice('/api/images/'.length)
+  if (s.startsWith('/api/images/')) {
+    const bare = s.slice('/api/images/'.length)
+    const q = bare.indexOf('?')
+    return q >= 0 ? bare.slice(0, q) : bare
+  }
 
   // /api/temp-images/<id>：原样交给后端 persist_to_storage（从内存缓存落正式库）
-  if (s.startsWith('/api/temp-images/')) return s
+  if (s.startsWith('/api/temp-images/')) {
+    const q = s.indexOf('?')
+    return q >= 0 ? s.slice(0, q) : s
+  }
 
   // 兜底：原样返回（绝对路径由后端检查/复制）
   return s

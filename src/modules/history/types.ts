@@ -9,7 +9,7 @@ export interface HistoryRecord {
   goods_name?: string
   load_rate?: number
   operator_name?: string
-  /** 1=合格，其它=不合格 — 对齐 Qt resultStatus */
+  /** 0=正常，1=异常 */
   result_status?: number
   inspection_time?: string
 }
@@ -99,6 +99,7 @@ export interface UserOption {
   real_name: string
   phone?: string
   role?: number
+  usergroup?: number
 }
 
 export interface DetailModifyPayload {

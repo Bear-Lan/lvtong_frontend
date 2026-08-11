@@ -54,8 +54,16 @@ const props = withDefaults(
 const emit = defineEmits<{
   close: []
   modified: []
-  /** submit 模式：用户点确认，由 Dashboard 执行真正提交 */
-  confirm: []
+  /** submit 模式：用户点确认，把预览里的查验结果/复审人带回 Dashboard */
+  confirm: [
+    payload?: {
+      result_status: number
+      reviewer_phone: string
+      inspector_phone: string
+      no_pass_type: number
+      group_id: number
+    },
+  ]
 }>()
 
 const isSubmitMode = computed(() => props.mode === 'submit')
@@ -90,7 +98,7 @@ const remark = ref('')
 const inspectorPhone = ref('')
 const reviewerPhone = ref('')
 const groupId = ref(0)
-const resultStatus = ref(1)
+const resultStatus = ref(0)
 const noPassType = ref(0)
 
 const showCarSize = ref(false)
@@ -102,7 +110,7 @@ const agriculturalRef = ref<InstanceType<typeof AgriculturalSelect> | null>(null
 const plateRef = ref<InstanceType<typeof LicensePlateEdit> | null>(null)
 const goodsSelection = ref<{ productCode: string; varietyName: string; varietyNamePinYin: string }[]>([])
 
-const showNoPass = computed(() => resultStatus.value === 2)
+const showNoPass = computed(() => resultStatus.value === 1)
 
 const plateStyle = computed(() => {
   const s = plateColorStyle(plateColor.value)
@@ -238,8 +246,10 @@ function applyRecord(data: InspectionDetail) {
   remark.value = data.history_record || ''
   inspectorPhone.value = data.inspector_phone || ''
   reviewerPhone.value = data.reviewer_phone || ''
-  groupId.value = data.group_id ?? 0
-  resultStatus.value = data.result_status === 2 ? 2 : 1
+  // DB 可能存 '' / '1'；下拉 option 是数字 1..5
+  groupId.value = Number(data.group_id) || 0
+  // 0=正常，1=异常
+  resultStatus.value = Number(data.result_status) === 1 ? 1 : 0
   noPassType.value = data.no_pass_type ?? 0
 }
 
@@ -357,12 +367,18 @@ function onReviewerChange() {
 }
 
 watch(resultStatus, (v) => {
-  if (v === 1) remark.value = ''
+  if (v === 0) remark.value = ''
 })
 
 function onConfirmSubmit() {
   if (!isSubmitMode.value) return
-  emit('confirm')
+  emit('confirm', {
+    result_status: resultStatus.value,
+    reviewer_phone: reviewerPhone.value,
+    inspector_phone: inspectorPhone.value,
+    no_pass_type: resultStatus.value === 1 ? noPassType.value : 0,
+    group_id: Number(groupId.value) || 0,
+  })
 }
 
 async function onModify() {
@@ -392,7 +408,7 @@ async function onModify() {
       reviewer_phone: reviewerPhone.value,
       group_id: groupId.value,
       result_status: resultStatus.value,
-      no_pass_type: resultStatus.value === 2 ? noPassType.value : 0,
+      no_pass_type: resultStatus.value === 1 ? noPassType.value : 0,
     }
 
     const res = await updateInspectionDetail(record.value.id, payload)

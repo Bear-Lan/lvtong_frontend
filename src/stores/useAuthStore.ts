@@ -7,6 +7,8 @@ export interface UserInfo {
   realName: string
   phone: string
   role: number
+  /** users.group_id，提交时写入查验记录班组 */
+  groupId?: number
 }
 
 const STORAGE_TOKEN = 'lvtong_token'

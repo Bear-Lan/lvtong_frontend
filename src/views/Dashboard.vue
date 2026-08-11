@@ -176,7 +176,20 @@ async function applyXrayProcess() {
     xrayDisplayUrl.value = ''
     return
   }
+  // 先立刻上原图，色阶放到空闲时再算，避免堵小车动画 / 右侧抓拍缩略图
+  xrayDisplayUrl.value = src
   const seq = ++xrayApplySeq
+  await new Promise<void>((resolve) => {
+    const ric = (window as Window & {
+      requestIdleCallback?: (cb: () => void, opts?: { timeout: number }) => number
+    }).requestIdleCallback
+    if (typeof ric === 'function') {
+      ric(() => resolve(), { timeout: 200 })
+    } else {
+      window.setTimeout(() => resolve(), 50)
+    }
+  })
+  if (seq !== xrayApplySeq) return
   try {
     const url = await processImage(src, {
       gamma: gammaValue.value,
@@ -189,7 +202,6 @@ async function applyXrayProcess() {
   } catch (e) {
     if (seq !== xrayApplySeq) return
     console.error('[透视影像] 处理失败', e)
-    // 处理失败时仍显示原图，避免空白
     xrayDisplayUrl.value = src
   }
 }
@@ -198,7 +210,7 @@ function scheduleXrayApply() {
   window.clearTimeout(xrayApplyTimer)
   xrayApplyTimer = window.setTimeout(() => {
     void applyXrayProcess()
-  }, 60)
+  }, 120)
 }
 
 function resetXrayProcessState() {
@@ -779,7 +791,9 @@ function buildSubmitPreview(): InspectionDetail {
     pass_code_image_path: toApiUrl(captureThumbs.value.passcode || '') || undefined,
     operator_name: auth.user?.realName || '',
     inspector_phone: auth.user?.phone || '',
-    result_status: 1,
+    reviewer_phone: '',
+    group_id: auth.user?.groupId ?? 0,
+    result_status: 0,
     pass_code_vehicle_color_name: form.value.plateColor || pc?.vehicleColorName || '',
     pass_code_en_station_id: pc?.enStationId,
     pass_code_ex_station_id: pc?.exStationId,
@@ -809,7 +823,13 @@ function onConfirm() {
   showSubmitPreview.value = true
 }
 
-async function onSubmitConfirmYes() {
+async function onSubmitConfirmYes(payload?: {
+  result_status?: number
+  reviewer_phone?: string
+  inspector_phone?: string
+  no_pass_type?: number
+  group_id?: number
+}) {
   showSubmitPreview.value = false
   submitPreview.value = null
 
@@ -843,9 +863,14 @@ async function onSubmitConfirmYes() {
     // 行驶证（合并图 + GC 牌）
     license_image_path: toStoragePath(licensePaths.value.license || ''),
     license_image_path1: toStoragePath(licensePaths.value.licenseGc || ''),
-    // 操作员
+    // 查验/班组用登录用户；复核人暂时留空
     operator_name: auth.user?.realName || '',
-    inspector_phone: auth.user?.phone || '',
+    inspector_phone: payload?.inspector_phone || auth.user?.phone || '',
+    reviewer_phone: '',
+    group_id: payload?.group_id ?? auth.user?.groupId ?? '',
+    // 0=正常，1=异常
+    result_status: payload?.result_status ?? 0,
+    no_pass_type: payload?.no_pass_type ?? 0,
   }
 
   // ---- 3. 通行码 14 字段（从 passcode ref 读） ----
@@ -923,16 +948,26 @@ function setupWS() {
   wsStore.connect()
 
   let radarLogN = 0
+  let pendingRadarDistance: number | null = null
+  let radarRaf = 0
   wsStore.subscribe('radar_distance', (msg) => {
     const data = msg.data as { distance?: number; mode?: number } | undefined
-    if (data?.distance != null && Number.isFinite(Number(data.distance))) {
-      const d = Number(data.distance)
-      workflow.value.distance = d
-      // 调试：受理后应持续打印；若没有则后端未推或 WS 未收到
-      radarLogN += 1
-      if (radarLogN === 1 || radarLogN % 20 === 0) {
-        console.info(`[WS] radar_distance #${radarLogN}: ${d}m mode=${data.mode ?? '-'}`)
-      }
+    if (data?.distance == null || !Number.isFinite(Number(data.distance))) return
+    const d = Number(data.distance)
+    // 合并到下一帧再写 ref，避免 10Hz+ 同步重绘压主线程
+    pendingRadarDistance = d
+    if (!radarRaf) {
+      radarRaf = requestAnimationFrame(() => {
+        radarRaf = 0
+        if (pendingRadarDistance != null) {
+          workflow.value.distance = pendingRadarDistance
+          pendingRadarDistance = null
+        }
+      })
+    }
+    radarLogN += 1
+    if (radarLogN === 1 || radarLogN % 20 === 0) {
+      console.info(`[WS] radar_distance #${radarLogN}: ${d}m mode=${data.mode ?? '-'}`)
     }
   })
 
@@ -1051,13 +1086,18 @@ function setupWS() {
     // 中间设备 agent / 占位批量出图 → 仅填车身影像、透视影像
     if (!data.urls) return
     if (data.imageType === 'body') {
-      if (data.urls['1']) bodyImageUrls.value.body = data.urls['1']
-      if (data.urls['2']) bodyImageUrls.value.top = data.urls['2']
-      if (data.urls['3']) bodyImageUrls.value.side = data.urls['3']
+      // 分帧写入，减轻同 tick 多面板解码压力
+      requestAnimationFrame(() => {
+        if (data.urls!['1']) bodyImageUrls.value.body = data.urls!['1']
+        if (data.urls!['2']) bodyImageUrls.value.top = data.urls!['2']
+        if (data.urls!['3']) bodyImageUrls.value.side = data.urls!['3']
+      })
     } else if (data.imageType === 'transparent') {
-      if (data.urls['1']) xrayImageUrls.value['200'] = data.urls['1']
-      if (data.urls['2']) xrayImageUrls.value['160'] = data.urls['2']
-      if (data.urls['3']) xrayImageUrls.value.mosaic = data.urls['3']
+      requestAnimationFrame(() => {
+        if (data.urls!['1']) xrayImageUrls.value['200'] = data.urls!['1']
+        if (data.urls!['2']) xrayImageUrls.value['160'] = data.urls!['2']
+        if (data.urls!['3']) xrayImageUrls.value.mosaic = data.urls!['3']
+      })
     }
     console.info(
       `[WS] image_ready group: ${data.imageType} group=${data.group} urls=${Object.keys(data.urls).length}`,

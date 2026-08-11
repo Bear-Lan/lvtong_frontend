@@ -24,6 +24,8 @@ const HIT_PX = 12
 const POINT_LUMA_MAX = 250
 const COL_RADIUS = 2
 const MIN_BOX_PX = 8
+/** 点云索引最长边；全分辨率扫描万级宽图会卡死主线程 */
+const INDEX_MAX_EDGE = 1600
 
 type PointIndex = {
   headX: number
@@ -110,28 +112,37 @@ function boxToStyle(box: { x1: number; y1: number; x2: number; y2: number }) {
 }
 
 function buildPointCloudIndex(img: HTMLImageElement): PointIndex | null {
-  const w = img.naturalWidth
-  const h = img.naturalHeight
+  const nw = img.naturalWidth
+  const nh = img.naturalHeight
+  if (nw <= 0 || nh <= 0) return null
+
+  // 缩到 INDEX_MAX_EDGE 再扫；结果坐标映射回 natural，避免万级宽图卡死主线程
+  const edge = Math.max(nw, nh)
+  const down = edge > INDEX_MAX_EDGE ? INDEX_MAX_EDGE / edge : 1
+  const w = Math.max(1, Math.round(nw * down))
+  const h = Math.max(1, Math.round(nh * down))
+
   const canvas = document.createElement('canvas')
   canvas.width = w
   canvas.height = h
   const ctx = canvas.getContext('2d', { willReadFrequently: true })
   if (!ctx) return null
-  ctx.drawImage(img, 0, 0)
+  ctx.drawImage(img, 0, 0, w, h)
   const { data } = ctx.getImageData(0, 0, w, h)
 
-  const colMinY = new Int32Array(w)
-  const colMaxY = new Int32Array(w)
+  const colMinY = new Int32Array(nw)
+  const colMaxY = new Int32Array(nw)
   colMinY.fill(-1)
   colMaxY.fill(-1)
 
-  let headX = w
+  let headX = nw
   let tailX = -1
-  let globalMinY = h
+  let globalMinY = nh
   let globalMaxY = -1
   let pointCount = 0
 
   for (let y = 0; y < h; y++) {
+    const natY = Math.min(nh - 1, Math.round((y * nh) / h))
     const row = y * w * 4
     for (let x = 0; x < w; x++) {
       const i = row + x * 4
@@ -142,13 +153,14 @@ function buildPointCloudIndex(img: HTMLImageElement): PointIndex | null {
       if (a < 16) continue
       if ((r + g + b) / 3 >= POINT_LUMA_MAX) continue
 
+      const natX = Math.min(nw - 1, Math.round((x * nw) / w))
       pointCount++
-      if (x < headX) headX = x
-      if (x > tailX) tailX = x
-      if (y < globalMinY) globalMinY = y
-      if (y > globalMaxY) globalMaxY = y
-      if (colMinY[x] < 0 || y < colMinY[x]) colMinY[x] = y
-      if (y > colMaxY[x]) colMaxY[x] = y
+      if (natX < headX) headX = natX
+      if (natX > tailX) tailX = natX
+      if (natY < globalMinY) globalMinY = natY
+      if (natY > globalMaxY) globalMaxY = natY
+      if (colMinY[natX] < 0 || natY < colMinY[natX]) colMinY[natX] = natY
+      if (natY > colMaxY[natX]) colMaxY[natX] = natY
     }
   }
 
@@ -259,19 +271,23 @@ function onImgLoad() {
     return
   }
 
-  try {
-    index.value = buildPointCloudIndex(img)
-  } catch (err) {
-    console.error('[BodyPointCloudPanel] 点云扫描失败', err)
-    index.value = null
-  }
+  // 延后扫描，先让 <img> 上屏，避免与小车重绘抢主线程
+  window.setTimeout(() => {
+    if (imgRef.value !== img) return
+    try {
+      index.value = buildPointCloudIndex(img)
+    } catch (err) {
+      console.error('[BodyPointCloudPanel] 点云扫描失败', err)
+      index.value = null
+    }
 
-  if (index.value) {
-    linePosition.value = (index.value.headX + index.value.tailX) / 2 / imgW.value
-  } else {
-    linePosition.value = 0.5
-  }
-  updateMeasure()
+    if (index.value) {
+      linePosition.value = (index.value.headX + index.value.tailX) / 2 / imgW.value
+    } else {
+      linePosition.value = 0.5
+    }
+    updateMeasure()
+  }, 0)
 }
 
 function clientToNatural(clientX: number, clientY: number) {

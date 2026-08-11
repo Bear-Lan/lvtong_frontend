@@ -12,6 +12,7 @@ export interface LoginResponse {
     realName: string
     phone: string
     role: number
+    groupId?: number
   }
 }
 

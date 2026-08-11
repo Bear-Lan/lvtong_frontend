@@ -46,10 +46,10 @@ export const GROUP_OPTIONS = [
   { value: 5, label: '班组5' },
 ] as const
 
-/** 查验结果 — 对齐 cb_result */
+/** 查验结果 — 0 正常 / 1 异常 */
 export const RESULT_OPTIONS = [
-  { value: 1, label: '合格' },
-  { value: 2, label: '不合格' },
+  { value: 0, label: '正常' },
+  { value: 1, label: '异常' },
 ] as const
 
 /** 图片占位 — 对齐 setPreviewImage */

@@ -112,8 +112,12 @@ export interface ProcessOptions {
 
 /**
  * 对原图做色阶，可选伪彩。
- * 流程：原图 → 色阶 LUT → [渲染开?] 伪彩 LUT → DataURL
+ * 流程：原图 →（必要时缩小）→ 色阶 LUT → [渲染开?] 伪彩 LUT → DataURL
+ *
+ * 占位/雷达原图可达万级宽度；不缩小会在主线程扫数千万像素，小车动画明显卡顿。
  */
+const PREVIEW_MAX_EDGE = 1600
+
 export async function processImage(
   sourceUrl: string,
   options: ProcessOptions = {},
@@ -126,33 +130,50 @@ export async function processImage(
   } = options
 
   const img = await loadImage(sourceUrl)
+  const srcW = img.naturalWidth || img.width
+  const srcH = img.naturalHeight || img.height
+  const edge = Math.max(srcW, srcH)
+  const scale = edge > PREVIEW_MAX_EDGE ? PREVIEW_MAX_EDGE / edge : 1
+  const w = Math.max(1, Math.round(srcW * scale))
+  const h = Math.max(1, Math.round(srcH * scale))
+
   const canvas = document.createElement('canvas')
-  canvas.width = img.naturalWidth || img.width
-  canvas.height = img.naturalHeight || img.height
+  canvas.width = w
+  canvas.height = h
   const ctx = canvas.getContext('2d', { willReadFrequently: true })
   if (!ctx) throw new Error('Canvas 不可用')
 
-  ctx.drawImage(img, 0, 0)
-  const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height)
+  ctx.drawImage(img, 0, 0, w, h)
+  const imageData = ctx.getImageData(0, 0, w, h)
   const data = imageData.data
   const levelsLut = generateLevelsLut(black, gamma, white)
 
-  for (let i = 0; i < data.length; i += 4) {
-    const gray = toGray(data[i], data[i + 1], data[i + 2])
-    const leveled = levelsLut[gray]
+  // 按行处理并周期性让出主线程，避免一次扫完整幅把小车卡死
+  const rowBytes = w * 4
+  const yieldEvery = 48
+  for (let y = 0; y < h; y++) {
+    const row = y * rowBytes
+    for (let x = 0; x < w; x++) {
+      const i = row + x * 4
+      const gray = toGray(data[i], data[i + 1], data[i + 2])
+      const leveled = levelsLut[gray]
 
-    if (pseudoColor) {
-      const o = leveled * 3
-      data[i] = PSEUDO_LUT[o]
-      data[i + 1] = PSEUDO_LUT[o + 1]
-      data[i + 2] = PSEUDO_LUT[o + 2]
-    } else {
-      data[i] = leveled
-      data[i + 1] = leveled
-      data[i + 2] = leveled
+      if (pseudoColor) {
+        const o = leveled * 3
+        data[i] = PSEUDO_LUT[o]
+        data[i + 1] = PSEUDO_LUT[o + 1]
+        data[i + 2] = PSEUDO_LUT[o + 2]
+      } else {
+        data[i] = leveled
+        data[i + 1] = leveled
+        data[i + 2] = leveled
+      }
+    }
+    if (y > 0 && y % yieldEvery === 0) {
+      await new Promise<void>((r) => setTimeout(r, 0))
     }
   }
 
   ctx.putImageData(imageData, 0, 0)
-  return canvas.toDataURL('image/jpeg', 0.92)
+  return canvas.toDataURL('image/jpeg', 0.85)
 }
