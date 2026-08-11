@@ -397,19 +397,21 @@ const captureDialog = ref<CaptureKind | null>(null)
 const showLicenseDialog = ref(false)
 
 // ---- 实时视频：multipart MJPEG（含 YOLO 检测框叠加）----
-// 检测服务不自动启动：需点右上角 ↻ 调 POST /live/ensure
+// 进入主页默认 ensure 启动检测并绑流
 const liveMjpegSrc = ref('')
 const liveVideoStatus = ref<'idle' | 'connecting' | 'playing' | 'error'>('idle')
-const liveVideoError = ref('检测未启动，请点击右上角启动')
+const liveVideoError = ref('')
 const liveReconnecting = ref(false)
 const liveDetectRunning = ref(false)
 
 let liveVideoRetryTimer: number | undefined
 let liveStatusPollTimer: number | undefined
+let liveEnsureInFlight = false
+let liveEnsureLastAt = 0
 
 const videoHint = computed(() => {
   if (liveVideoError.value) return liveVideoError.value
-  if (liveVideoStatus.value === 'idle') return '检测未启动，请点击右上角启动'
+  if (liveVideoStatus.value === 'idle') return '正在启动实时视频…'
   if (liveVideoStatus.value === 'connecting') return '连接中…'
   if (liveVideoStatus.value === 'playing') return ''
   if (liveVideoStatus.value === 'error') return liveVideoError.value || '实时视频连接失败'
@@ -430,7 +432,7 @@ function onLiveMjpegError() {
   if (liveVideoStatus.value === 'playing') return
   if (!liveDetectRunning.value) {
     liveVideoStatus.value = 'idle'
-    liveVideoError.value = '检测未启动，请点击右上角启动'
+    liveVideoError.value = '检测服务未就绪，稍后自动重试…'
     return
   }
   liveVideoStatus.value = 'error'
@@ -450,8 +452,10 @@ async function pollLiveStatus() {
     if (!st.running) {
       if (liveVideoStatus.value !== 'playing') {
         liveVideoStatus.value = 'idle'
-        liveVideoError.value = '检测未启动，请点击右上角启动'
+        liveVideoError.value = '检测服务未运行，正在尝试启动…'
         liveMjpegSrc.value = ''
+        // 轮询发现未运行时自动 ensure（进入页面后默认保持开启）
+        void ensureLiveDetectQuiet()
       }
       return
     }
@@ -476,6 +480,27 @@ async function pollLiveStatus() {
       liveVideoStatus.value = 'error'
       liveVideoError.value = '实时视频服务未就绪'
     }
+  }
+}
+
+async function ensureLiveDetectQuiet() {
+  if (liveReconnecting.value || liveEnsureInFlight) return
+  const now = Date.now()
+  if (now - liveEnsureLastAt < 8000) return
+  liveEnsureInFlight = true
+  liveEnsureLastAt = now
+  try {
+    await request(LIVE_ENSURE_PATH, { method: 'POST', timeout: 15000 })
+    liveDetectRunning.value = true
+    if (!liveMjpegSrc.value) {
+      liveVideoStatus.value = 'connecting'
+      liveVideoError.value = ''
+      bumpLiveMjpeg()
+    }
+  } catch {
+    /* 下轮 poll 再试 */
+  } finally {
+    liveEnsureInFlight = false
   }
 }
 
@@ -512,11 +537,11 @@ async function reconnectLiveVideo() {
 }
 
 function startLiveVideo() {
-  // 进入页面只轮询状态，不自动启动 worker
-  liveVideoStatus.value = 'idle'
-  liveVideoError.value = '检测未启动，请点击右上角启动'
+  // 进入页面默认启动检测并绑 MJPEG
+  liveVideoStatus.value = 'connecting'
+  liveVideoError.value = ''
   liveMjpegSrc.value = ''
-  void pollLiveStatus()
+  void reconnectLiveVideo()
   window.clearInterval(liveStatusPollTimer)
   liveStatusPollTimer = window.setInterval(() => {
     void pollLiveStatus()
