@@ -106,6 +106,17 @@ const canToggleTalk = computed(
 
 async function handleConfirmYes() {
   try {
+    // 受理/驳回前先停 WHEP + 海康对讲，不依赖用户先点「停止对讲」
+    try {
+      await stopVideo()
+    } catch {
+      /* ignore */
+    }
+    try {
+      await stopHik()
+    } catch {
+      /* ignore */
+    }
     const result = await confirmYes()
     if (result?.kind === 'accept') {
       emit('accept', result.payload)

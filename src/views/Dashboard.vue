@@ -22,6 +22,8 @@ import AiStatusDialog from '@/components/AiStatusDialog.vue'
 import UserManager from '@/components/UserManager.vue'
 import QtMessageBox from '@/components/common/QtMessageBox.vue'
 import HistoryDialog from '@/modules/history/HistoryDialog.vue'
+import DetailDialog from '@/modules/history/DetailDialog.vue'
+import type { InspectionDetail } from '@/modules/history'
 import CaptureCameraDialog from '@/components/capture/CaptureCameraDialog.vue'
 import type { CaptureKind } from '@/components/capture/CaptureCameraDialog.vue'
 import DrivingLicenseDialog from '@/components/capture/DrivingLicenseDialog.vue'
@@ -733,17 +735,83 @@ function doReset() {
   workflow.value.cdPhotoTime = ''
 }
 
+function buildSubmitPreview(): InspectionDetail {
+  const plate = form.value.plate === '--' ? '' : form.value.plate
+  const truck = truckTypeOptions.value.find((t) => t.type_code === form.value.truckType)
+  const container = containerTypeOptions.value.find(
+    (t) => t.type_code === form.value.containerType,
+  )
+  // 多图字段必须逐张 toApiUrl：移动端绝对路径等否则 <img> 无法加载
+  const goodsJoined = (captureLists.value.goods || [])
+    .map((p) => toApiUrl(p))
+    .filter(Boolean)
+    .join('|')
+  const evidenceJoined = (captureLists.value.evidence || [])
+    .map((p) => toApiUrl(p))
+    .filter(Boolean)
+    .join('|')
+  const pc = passcode.value?.valid ? passcode.value : null
+
+  return {
+    id: 0,
+    plate_number: plate,
+    plate_number_gc: form.value.plateGc === '--' ? '' : form.value.plateGc,
+    driver_phone: form.value.phone,
+    vehicle_type: form.value.truckType,
+    vehicle_name: truck?.type_name || '',
+    vehicle_container_type: form.value.containerType,
+    vehicle_container_name: container?.type_name || '',
+    goods_type: form.value.goodsProductCode || form.value.goods,
+    goods_name: form.value.goods,
+    load_rate: parseFloat(form.value.loadRate) || 0,
+    load_weight: parseFloat(form.value.weight) || 0,
+    vehicle_size: form.value.size,
+    head_image_path: toApiUrl(captureThumbs.value.head || '') || undefined,
+    tail_image_path: toApiUrl(captureThumbs.value.tail || '') || undefined,
+    top_image_path: toApiUrl(bodyImageUrls.value.top || captureThumbs.value.top || '') || undefined,
+    body_image_path: toApiUrl(bodyImageUrls.value.body || '') || undefined,
+    transparent_image_path:
+      toApiUrl(xrayDisplayUrl.value || xrayImageUrls.value['200'] || '') || undefined,
+    goods_image_path: goodsJoined || undefined,
+    evidences_image_path: evidenceJoined || undefined,
+    license_image_path:
+      toApiUrl(licensePaths.value.license || captureThumbs.value.license || '') || undefined,
+    pass_code_image_path: toApiUrl(captureThumbs.value.passcode || '') || undefined,
+    operator_name: auth.user?.realName || '',
+    inspector_phone: auth.user?.phone || '',
+    result_status: 1,
+    pass_code_vehicle_color_name: form.value.plateColor || pc?.vehicleColorName || '',
+    pass_code_en_station_id: pc?.enStationId,
+    pass_code_ex_station_id: pc?.exStationId,
+    pass_code_en_weight: pc?.enWeight,
+    pass_code_ex_weight: pc?.exWeight,
+    pass_code_media_type_id: pc != null ? String(pc.mediaTypeId || '') : undefined,
+    pass_code_transaction_id: pc?.transactionId,
+    pass_code_pass_id: pc?.passId,
+    pass_code_ex_time: pc?.exTime,
+    pass_code_trans_pay_type: pc != null ? String(pc.transPayTypeId || '') : undefined,
+    pass_code_fee: pc?.fee,
+    pass_code_pay_fee: pc?.payFee,
+    pass_code_vehicle_sign: pc?.vehicleSignId
+      ? `0x${pc.vehicleSignId.toString(16).toUpperCase()}`
+      : undefined,
+    pass_code_province_count: pc?.provinceCount,
+  }
+}
+
 function onConfirm() {
-  /** 对齐 LvTongPro::onConfirmClicked：先弹 ConfirmDialog 二次确认，再写库 */
+  /** 对齐 LvTongPro::onConfirmClicked：先弹查验记录预览，再写库 */
   if (!form.value.goods) {
     alert('请选择农产品类型')
     return
   }
-  showSubmitConfirmBox.value = true
+  submitPreview.value = buildSubmitPreview()
+  showSubmitPreview.value = true
 }
 
 async function onSubmitConfirmYes() {
-  showSubmitConfirmBox.value = false
+  showSubmitPreview.value = false
+  submitPreview.value = null
 
   // ---- 1. 组装 body（50+ 字段，对齐 Qt VehicleInspection） ----
   // 图片统一交给后端 persist_to_storage 归一：前端只负责把"任何形态的引用"
@@ -769,9 +837,8 @@ async function onSubmitConfirmYes() {
     transparent_image_path: toStoragePath(xrayImageUrls.value['200'] || ''),
     // 通行码 QR 图（对齐 Qt m_codeImagePath，flask 后端生成）
     passcode_image_path: toStoragePath(captureThumbs.value.passcode || ''),
-    // 货物图（多张，| 分隔；后端 persist_to_storage 会兜底接受 ,）
+    // 货物图 / 证据照（多张统一 | 分隔）
     goods_image_path: joinImagePaths(captureLists.value.goods || []),
-    // 证据照（多张，| 分隔）
     evidences_image_path: joinImagePaths(captureLists.value.evidence || []),
     // 行驶证（合并图 + GC 牌）
     license_image_path: toStoragePath(licensePaths.value.license || ''),
@@ -834,7 +901,8 @@ async function onSubmitConfirmYes() {
 }
 
 function onSubmitConfirmNo() {
-  showSubmitConfirmBox.value = false
+  showSubmitPreview.value = false
+  submitPreview.value = null
 }
 
 // ---- 急停（对齐 LvTongPro::onStopClicked / onPLCStopChanged）----
@@ -845,8 +913,9 @@ const showStopResetBox = ref(false)
 const stopErrorVisible = ref(false)
 const stopErrorMessage = ref('')
 
-// ---- 提交确认 — 对齐 LvTongPro::onConfirmClicked → ConfirmDialog ----
-const showSubmitConfirmBox = ref(false)
+// ---- 提交前查验记录预览 — 对齐 DetailDialog ----
+const showSubmitPreview = ref(false)
+const submitPreview = ref<InspectionDetail | null>(null)
 const showResetConfirmBox = ref(false)
 
 // ---- WebSocket 实时数据 ----
@@ -1009,7 +1078,7 @@ function setupWS() {
           passcode_image_path?: string
           license_image_path1?: string
           license_image_path2?: string
-          goods_image_path?: string  // 多个，逗号分隔
+          goods_image_path?: string  // 多个，| 分隔
           evidences_image_path?: string
         }
       | undefined
@@ -1024,16 +1093,16 @@ function setupWS() {
     if (data.license_image_path1) licensePaths.value.license = toImageUrl(data.license_image_path1)
     if (data.license_image_path2) licensePaths.value.licenseGc = toImageUrl(data.license_image_path2)
 
-    // 货物图（多张，append 到列表 — 对齐 Qt getGoodImgListPath()）
+    // 货物图（多张，| 分隔 — 对齐 Qt getGoodImgListPath()）
     if (data.goods_image_path) {
-      const urls = data.goods_image_path.split(',').filter(Boolean).map(toImageUrl)
+      const urls = data.goods_image_path.split('|').filter(Boolean).map(toImageUrl)
       captureLists.value.goods = urls
       captureThumbs.value.goods = urls[0] || ''
     }
 
-    // 证据照（多张 — 对齐 Qt getEvidenceListPath()）
+    // 证据照（多张，| 分隔 — 对齐 Qt getEvidenceListPath()）
     if (data.evidences_image_path) {
-      const urls = data.evidences_image_path.split(',').filter(Boolean).map(toImageUrl)
+      const urls = data.evidences_image_path.split('|').filter(Boolean).map(toImageUrl)
       captureLists.value.evidence = urls
       captureThumbs.value.evidence = urls[0] || ''
     }
@@ -1208,7 +1277,8 @@ const anyDialogOpen = computed(
     showStopConfirmBox.value ||
     showStopResetBox.value ||
     stopErrorVisible.value ||
-    showTransDelConfirm.value,
+    showTransDelConfirm.value ||
+    showSubmitPreview.value,
 )
 </script>
 
@@ -1632,15 +1702,12 @@ const anyDialogOpen = computed(
       @close="onStopResetClose"
     />
 
-    <!-- 提交二次确认 — 对齐 LvTongPro::onConfirmClicked → ConfirmDialog -->
-    <QtMessageBox
-      v-if="showSubmitConfirmBox"
-      title="确认提交"
-      message="确认无误？提交后将清空表单与预约状态。"
-      icon="question"
-      :buttons="['yes', 'no']"
-      @yes="onSubmitConfirmYes"
-      @no="onSubmitConfirmNo"
+    <!-- 提交前查验记录预览 — 对齐 DetailDialog 查验记录页 -->
+    <DetailDialog
+      v-if="showSubmitPreview && submitPreview"
+      mode="submit"
+      :preview="submitPreview"
+      @confirm="onSubmitConfirmYes"
       @close="onSubmitConfirmNo"
     />
 

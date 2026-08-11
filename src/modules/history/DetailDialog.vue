@@ -1,7 +1,9 @@
 ﻿<script setup lang="ts">
 /**
  * 查验记录详情弹窗 — 1:1 对齐 Qt DetailDialog.ui / DetailDialog.cpp
- * 尺寸 1340×960，由历史记录「查看详情 / 双击」打开
+ * 尺寸 1340×960
+ * - history：历史记录「查看详情 / 双击」打开，可修改
+ * - submit：Dashboard 提交前预览，只读，确认后才真正提交
  */
 import { computed, onMounted, ref, watch } from 'vue'
 import AgriculturalSelect from '@/components/AgriculturalSelect.vue'
@@ -35,14 +37,29 @@ import {
   splitImagePaths,
 } from './utils/passCodeDisplay'
 
-const props = defineProps<{
-  inspectionId: number
-}>()
+const props = withDefaults(
+  defineProps<{
+    mode?: 'history' | 'submit'
+    /** history 模式必填 */
+    inspectionId?: number
+    /** submit 模式：当前录入快照，不请求详情 API */
+    preview?: InspectionDetail | null
+  }>(),
+  {
+    mode: 'history',
+    preview: null,
+  },
+)
 
 const emit = defineEmits<{
   close: []
   modified: []
+  /** submit 模式：用户点确认，由 Dashboard 执行真正提交 */
+  confirm: []
 }>()
+
+const isSubmitMode = computed(() => props.mode === 'submit')
+const readOnly = computed(() => isSubmitMode.value)
 
 const loading = ref(true)
 const saving = ref(false)
@@ -211,7 +228,11 @@ function applyRecord(data: InspectionDetail) {
   goodsTypeCode.value = data.goods_type || ''
   plateNumber.value = data.plate_number || ''
   plateColor.value = data.pass_code_vehicle_color_name || (data.plate_number ? '1' : '')
-  vehicleSizeDisplay.value = formatVehicleSizeDisplay(data.vehicle_size)
+  // Dashboard 预览可能已是「长xm|宽ym|高zm」；历史库多为毫米「L|W|H」
+  vehicleSizeDisplay.value =
+    data.vehicle_size && /长/.test(data.vehicle_size)
+      ? data.vehicle_size
+      : formatVehicleSizeDisplay(data.vehicle_size)
   loadRate.value = data.load_rate != null ? String(data.load_rate) : ''
   driverPhone.value = data.driver_phone || ''
   remark.value = data.history_record || ''
@@ -225,6 +246,24 @@ function applyRecord(data: InspectionDetail) {
 async function loadDetail() {
   loading.value = true
   try {
+    if (isSubmitMode.value) {
+      if (props.preview) {
+        applyRecord(props.preview)
+        enStationName.value = await fetchStationName(props.preview.pass_code_en_station_id)
+        exStationName.value = await fetchStationName(props.preview.pass_code_ex_station_id)
+      } else {
+        tipOk.value = false
+        tipMessage.value = '预览数据为空'
+        tipVisible.value = true
+      }
+      return
+    }
+    if (props.inspectionId == null) {
+      tipOk.value = false
+      tipMessage.value = '缺少查验记录 ID'
+      tipVisible.value = true
+      return
+    }
     const res = await fetchInspectionDetail(props.inspectionId)
     if (res.code !== 0 || !res.data) {
       tipOk.value = false
@@ -254,6 +293,7 @@ async function loadDicts() {
 }
 
 function onSelectGoods() {
+  if (readOnly.value) return
   // 从已有货物字段还原选中池（详情打开时未必经过本弹窗确认）
   if (!goodsSelection.value.length && (goodsTypeCode.value || goodsName.value)) {
     const codes = goodsTypeCode.value.split('|').filter(Boolean)
@@ -278,6 +318,7 @@ function onGoodsConfirm(
 }
 
 function onSelectPlate() {
+  if (readOnly.value) return
   plateRef.value?.show()
 }
 
@@ -287,6 +328,7 @@ function onPlateConfirm(plate: string, color: string) {
 }
 
 function openCarSize() {
+  if (readOnly.value) return
   const m = vehicleSizeDisplay.value.match(/长\s*([\d.]+)\s*m\s*\|\s*宽\s*([\d.]+)\s*m\s*\|\s*高\s*([\d.]+)\s*m/i)
   if (m) {
     carLen.value = m[1]
@@ -318,8 +360,13 @@ watch(resultStatus, (v) => {
   if (v === 1) remark.value = ''
 })
 
+function onConfirmSubmit() {
+  if (!isSubmitMode.value) return
+  emit('confirm')
+}
+
 async function onModify() {
-  if (!record.value) return
+  if (isSubmitMode.value || !record.value) return
   saving.value = true
   try {
     const truck = truckTypes.value.find((t) => t.type_code === truckType.value)
@@ -379,7 +426,7 @@ onMounted(async () => {
     <div class="detail-dialog" role="dialog" aria-modal="true" @click.stop>
       <div class="dialog-titlebar">
         <img class="title-logo" src="/assets/img/logo.png" alt="" />
-        <span class="dialog-title">查验记录</span>
+        <span class="dialog-title">{{ isSubmitMode ? '提交确认' : '查验记录' }}</span>
         <button type="button" class="dialog-close" title="关闭" @click="emit('close')">×</button>
       </div>
 
@@ -469,20 +516,26 @@ onMounted(async () => {
             <div class="form-col">
               <div class="field-row">
                 <label>货车类型</label>
-                <select v-model="truckType" class="uline-select">
+                <select v-model="truckType" class="uline-select" :disabled="readOnly">
                   <option v-for="t in truckTypes" :key="t.type_code" :value="t.type_code">{{ t.type_name }}</option>
                 </select>
               </div>
               <div class="field-row">
                 <label>货箱类型</label>
-                <select v-model="containerType" class="uline-select">
+                <select v-model="containerType" class="uline-select" :disabled="readOnly">
                   <option v-for="t in containerTypes" :key="t.type_code" :value="t.type_code">{{ t.type_name }}</option>
                 </select>
               </div>
               <div class="field-row">
                 <label>货物名称</label>
                 <input v-model="goodsName" readonly class="with-btn" />
-                <button type="button" class="icon-btn" title="货物类型选择" @click="onSelectGoods">
+                <button
+                  v-if="!readOnly"
+                  type="button"
+                  class="icon-btn"
+                  title="货物类型选择"
+                  @click="onSelectGoods"
+                >
                   <img src="/assets/img/a_search.png" alt="" />
                 </button>
               </div>
@@ -491,7 +544,7 @@ onMounted(async () => {
               <div class="field-row"><label>应收金额(元)</label><input readonly :value="record.pass_code_pay_fee || ''" /></div>
               <div class="field-row"><label>交易支付方式</label><input readonly :value="getTransPayTypeStr(record.pass_code_trans_pay_type)" /></div>
               <div class="field-row"><label>车辆状态标识</label><input readonly :value="getVehicleSignStr(record.pass_code_vehicle_sign)" /></div>
-              <div class="field-row"><label>备注内容</label><input v-model="remark" /></div>
+              <div class="field-row"><label>备注内容</label><input v-model="remark" :readonly="readOnly" /></div>
             </div>
 
             <!-- 右列 -->
@@ -505,14 +558,26 @@ onMounted(async () => {
                   :style="plateStyle || undefined"
                   :title="plateColor ? `车牌颜色：${plateColor}` : ''"
                 />
-                <button type="button" class="icon-btn" title="车牌选择" @click="onSelectPlate">
+                <button
+                  v-if="!readOnly"
+                  type="button"
+                  class="icon-btn"
+                  title="车牌选择"
+                  @click="onSelectPlate"
+                >
                   <img src="/assets/img/a_chxz.png" alt="" />
                 </button>
               </div>
               <div class="field-row">
                 <label>长宽高</label>
                 <input v-model="vehicleSizeDisplay" readonly class="with-btn" />
-                <button type="button" class="icon-btn" title="设置长宽高" @click="openCarSize">
+                <button
+                  v-if="!readOnly"
+                  type="button"
+                  class="icon-btn"
+                  title="设置长宽高"
+                  @click="openCarSize"
+                >
                   <img src="/assets/img/a_chxz.png" alt="" />
                 </button>
               </div>
@@ -525,17 +590,23 @@ onMounted(async () => {
                   v-model="loadRate"
                   class="load-rate-input"
                   :class="loadRateClass"
+                  :readonly="readOnly"
                   placeholder="请输入满载率，区间0-100"
                 />
               </div>
               <div class="field-row">
                 <label>司机电话</label>
-                <input v-model="driverPhone" maxlength="11" placeholder="请输入11位手机号" />
+                <input
+                  v-model="driverPhone"
+                  maxlength="11"
+                  placeholder="请输入11位手机号"
+                  :readonly="readOnly"
+                />
               </div>
               <div class="field-row"><label>查验依据</label><input readonly value="" /></div>
               <div class="field-row">
                 <label>查验</label>
-                <select v-model="inspectorPhone" class="uline-select">
+                <select v-model="inspectorPhone" class="uline-select" :disabled="readOnly">
                   <option value="">请选择</option>
                   <option v-for="u in users" :key="u.username" :value="u.phone || u.username">
                     {{ userLabel(u) }}
@@ -544,7 +615,12 @@ onMounted(async () => {
               </div>
               <div class="field-row">
                 <label>复核</label>
-                <select v-model="reviewerPhone" class="uline-select" @change="onReviewerChange">
+                <select
+                  v-model="reviewerPhone"
+                  class="uline-select"
+                  :disabled="readOnly"
+                  @change="onReviewerChange"
+                >
                   <option value="">请选择</option>
                   <option v-for="u in users" :key="`r-${u.username}`" :value="u.phone || u.username">
                     {{ userLabel(u) }}
@@ -559,13 +635,17 @@ onMounted(async () => {
               </div>
               <div class="field-row result-row">
                 <label class="tag-blue">查验结果</label>
-                <select v-model.number="resultStatus" class="uline-select result-select">
+                <select
+                  v-model.number="resultStatus"
+                  class="uline-select result-select"
+                  :disabled="readOnly"
+                >
                   <option v-for="r in RESULT_OPTIONS" :key="r.value" :value="r.value">{{ r.label }}</option>
                 </select>
               </div>
               <div v-if="showNoPass" class="field-row result-row">
                 <label class="tag-red">不合格类型</label>
-                <select v-model="noPassType" class="uline-select">
+                <select v-model="noPassType" class="uline-select" :disabled="readOnly">
                   <option v-for="n in noPassTypes" :key="n.code" :value="Number(n.code)">
                     {{ n.code }}:{{ n.value }}
                   </option>
@@ -576,33 +656,51 @@ onMounted(async () => {
         </div>
 
         <div class="footer-actions">
-          <button type="button" class="btn-modify" :disabled="saving" @click="onModify">修改</button>
+          <button
+            v-if="isSubmitMode"
+            type="button"
+            class="btn-modify"
+            @click="onConfirmSubmit"
+          >
+            确认
+          </button>
+          <button
+            v-else
+            type="button"
+            class="btn-modify"
+            :disabled="saving"
+            @click="onModify"
+          >
+            修改
+          </button>
           <button type="button" class="btn-close" @click="emit('close')">关闭</button>
         </div>
       </div>
     </div>
 
-    <AgriculturalSelect ref="agriculturalRef" @confirm="onGoodsConfirm" />
-    <LicensePlateEdit
-      ref="plateRef"
-      :current-plate="plateNumber"
-      :current-color="plateColor"
-      title="车牌修改"
-      @confirm="onPlateConfirm"
-    />
+    <template v-if="!readOnly">
+      <AgriculturalSelect ref="agriculturalRef" @confirm="onGoodsConfirm" />
+      <LicensePlateEdit
+        ref="plateRef"
+        :current-plate="plateNumber"
+        :current-color="plateColor"
+        title="车牌修改"
+        @confirm="onPlateConfirm"
+      />
 
-    <div v-if="showCarSize" class="car-size-panel" @click.self="showCarSize = false">
-      <div class="car-size-box">
-        <h4>设置长宽高 (m)</h4>
-        <label>长 <input v-model="carLen" type="number" step="0.01" /></label>
-        <label>宽 <input v-model="carWidth" type="number" step="0.01" /></label>
-        <label>高 <input v-model="carHeight" type="number" step="0.01" /></label>
-        <div class="car-size-actions">
-          <button type="button" @click="showCarSize = false">取消</button>
-          <button type="button" class="ok" @click="confirmCarSize">确定</button>
+      <div v-if="showCarSize" class="car-size-panel" @click.self="showCarSize = false">
+        <div class="car-size-box">
+          <h4>设置长宽高 (m)</h4>
+          <label>长 <input v-model="carLen" type="number" step="0.01" /></label>
+          <label>宽 <input v-model="carWidth" type="number" step="0.01" /></label>
+          <label>高 <input v-model="carHeight" type="number" step="0.01" /></label>
+          <div class="car-size-actions">
+            <button type="button" @click="showCarSize = false">取消</button>
+            <button type="button" class="ok" @click="confirmCarSize">确定</button>
+          </div>
         </div>
       </div>
-    </div>
+    </template>
 
     <QtMessageBox
       v-if="tipVisible"

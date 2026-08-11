@@ -54,18 +54,10 @@ export function parseVehicleSizeToMm(display: string): string {
   return `${toMm(m[1])}|${toMm(m[2])}|${toMm(m[3])}`
 }
 
-/** 拆分多图字段路径。
- *  支持 `|`（新约定）和 `,`（兼容 Qt 时代历史数据）。
- *  哨兵：路径里如果含 ,（不应该），同时按两种分隔符切。
- *  路径里如果含 |（更不可能，path 字符集里没有），同时按两种切。
- */
+/** 拆分多图字段路径。统一用 `|` 分隔（dataUrl 含逗号，绝不能用 `,`）。 */
 export function splitImagePaths(raw?: string | null): string[] {
   if (!raw) return []
-  // 先按 | 切（如有），再按 , 切（如有），求并集去空
-  const byBoth = (s: string) =>
-    [...new Set(s.split(/[|,]/).map((p) => p.trim()).filter(Boolean))]
-  const parts = byBoth(raw)
-  return parts
+  return raw.split('|').map((p) => p.trim()).filter(Boolean)
 }
 
 /** 浏览器是否能直接当 URL 用 */
