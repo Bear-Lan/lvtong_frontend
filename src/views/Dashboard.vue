@@ -13,7 +13,6 @@ import BottomWorkflowPanel from '@/components/BottomWorkflowPanel.vue'
 import type { WorkflowStepKey } from '@/components/WorkflowIcons.vue'
 import BookingDialog from '@/modules/booking/BookingDialog.vue'
 import TalkDialog from '@/components/TalkDialog.vue'
-import DangerZoneDialog from '@/components/DangerZoneDialog.vue'
 import AgriculturalSelect from '@/components/AgriculturalSelect.vue'
 import LicensePlateEdit from '@/components/LicensePlateEdit.vue'
 import CarSizeDialog from '@/components/CarSizeDialog.vue'
@@ -33,12 +32,8 @@ import type { BookingAcceptPayload, BookingComingPayload } from '@/modules/booki
 import { useRouter } from 'vue-router'
 import { toApiUrl, toStoragePath, joinImagePaths } from '@/utils/imagePath'
 import { processImage } from '@/utils/imageProcess'
-import {
-  LIVE_ENSURE_PATH,
-  LIVE_MJPEG_URL,
-  LIVE_RECONNECT_PATH,
-  LIVE_STATUS_PATH,
-} from '@/config/liveVideo'
+import { useWhepPlayer } from '@/composables/useWhepPlayer'
+import { DEFAULT_WHEP_URL } from '@/config/liveVideo'
 const auth = useAuthStore()
 const wsStore = useWsStore()
 const bookingStore = useBookingStore()
@@ -52,8 +47,6 @@ const showUserMgr = ref(false)
 const showUsrMgrDenied = ref(false)
 /** 可视对讲 — 对齐 Qt TalkDialog（底部喇叭按钮） */
 const showTalkDialog = ref(false)
-/** 危险区域设置（实时视频栏入口） */
-const showDangerZone = ref(false)
 /** 对齐 Qt：弹窗贴在对应按钮下方 */
 const plcAnchor = ref<{ left: number; top: number } | null>(null)
 const aiAnchor = ref<{ left: number; top: number } | null>(null)
@@ -398,176 +391,56 @@ type ThumbKey = CaptureKey | 'passcode'
 const captureDialog = ref<CaptureKind | null>(null)
 const showLicenseDialog = ref(false)
 
-// ---- 实时视频：multipart MJPEG（含 YOLO 检测框叠加）----
-// 进入主页默认 ensure 启动检测并绑流
-const liveMjpegSrc = ref('')
-const liveVideoStatus = ref<'idle' | 'connecting' | 'playing' | 'error'>('idle')
-const liveVideoError = ref('')
-const liveReconnecting = ref(false)
-const liveDetectRunning = ref(false)
+// ---- 实时视频：MediaMTX WHEP（海康 RTSP → MediaMTX → 前端 <video>）----
+const liveVideoRef = ref<HTMLVideoElement | null>(null)
+const {
+  status: liveVideoStatus,
+  error: liveVideoError,
+  play: playLiveVideo,
+  stop: stopLiveVideoPlayer,
+} = useWhepPlayer()
 
 let liveVideoRetryTimer: number | undefined
-let liveStatusPollTimer: number | undefined
-let liveEnsureInFlight = false
-let liveEnsureLastAt = 0
 
 const videoHint = computed(() => {
   if (liveVideoError.value) return liveVideoError.value
-  if (liveVideoStatus.value === 'idle') return '正在启动实时视频…'
   if (liveVideoStatus.value === 'connecting') return '连接中…'
   if (liveVideoStatus.value === 'playing') return ''
+  if (liveVideoStatus.value === 'failed' || liveVideoStatus.value === 'disconnected') {
+    return '连接中断，正在重试…'
+  }
   if (liveVideoStatus.value === 'error') return liveVideoError.value || '实时视频连接失败'
   return '准备播放…'
 })
 
-function bumpLiveMjpeg() {
-  liveMjpegSrc.value = `${LIVE_MJPEG_URL}?t=${Date.now()}`
-}
-
-function onLiveMjpegLoad() {
-  liveVideoStatus.value = 'playing'
-  liveVideoError.value = ''
-}
-
-function onLiveMjpegError() {
-  // 偶发坏帧不要立刻整路重连（会灰屏）；仅在未出画时提示
-  if (liveVideoStatus.value === 'playing') return
-  if (!liveDetectRunning.value) {
-    liveVideoStatus.value = 'idle'
-    liveVideoError.value = '检测服务未就绪，稍后自动重试…'
-    return
-  }
-  liveVideoStatus.value = 'error'
-  liveVideoError.value = '实时视频不可用（请点击右上角重试）'
-  scheduleLiveVideoRetry()
-}
-
-async function pollLiveStatus() {
+async function startLiveVideo() {
+  const el = liveVideoRef.value
+  if (!el) return
   try {
-    const res = await request<{
-      connection?: string
-      error?: string
-      running?: boolean
-    }>(LIVE_STATUS_PATH, { timeout: 2500 })
-    const st = res.data || {}
-    liveDetectRunning.value = !!st.running
-    if (!st.running) {
-      if (liveVideoStatus.value !== 'playing') {
-        liveVideoStatus.value = 'idle'
-        liveVideoError.value = '检测服务未运行，正在尝试启动…'
-        liveMjpegSrc.value = ''
-        // 轮询发现未运行时自动 ensure（进入页面后默认保持开启）
-        void ensureLiveDetectQuiet()
-      }
-      return
-    }
-    if (st.error && liveVideoStatus.value !== 'playing') {
-      liveVideoError.value = String(st.error)
-    }
-    // 已运行但尚未绑流：自动绑 MJPEG（例如刚 ensure 成功）
-    if (
-      liveVideoStatus.value !== 'playing' &&
-      ['connected', 'connecting', 'starting', 'running', 'ok'].includes(
-        st.connection || '',
-      )
-    ) {
-      if (!liveMjpegSrc.value) {
-        liveVideoStatus.value = 'connecting'
-        liveVideoError.value = ''
-        bumpLiveMjpeg()
-      }
-    }
+    await playLiveVideo({ video: el, whepUrl: DEFAULT_WHEP_URL })
   } catch {
-    if (liveVideoStatus.value !== 'playing') {
-      liveVideoStatus.value = 'error'
-      liveVideoError.value = '实时视频服务未就绪'
-    }
+    scheduleLiveVideoRetry()
   }
-}
-
-async function ensureLiveDetectQuiet() {
-  if (liveReconnecting.value || liveEnsureInFlight) return
-  const now = Date.now()
-  if (now - liveEnsureLastAt < 8000) return
-  liveEnsureInFlight = true
-  liveEnsureLastAt = now
-  try {
-    await request(LIVE_ENSURE_PATH, { method: 'POST', timeout: 15000 })
-    liveDetectRunning.value = true
-    if (!liveMjpegSrc.value) {
-      liveVideoStatus.value = 'connecting'
-      liveVideoError.value = ''
-      bumpLiveMjpeg()
-    }
-  } catch {
-    /* 下轮 poll 再试 */
-  } finally {
-    liveEnsureInFlight = false
-  }
-}
-
-async function reconnectLiveVideo() {
-  if (liveReconnecting.value) return
-  liveReconnecting.value = true
-  liveVideoStatus.value = 'connecting'
-  liveVideoError.value = ''
-  try {
-    const res = await request<{ connection?: string; running?: boolean }>(
-      LIVE_STATUS_PATH,
-      { timeout: 2500 },
-    )
-    const st = res.data || {}
-    if (!st.running) {
-      // 未运行：手动启动
-      await request(LIVE_ENSURE_PATH, { method: 'POST', timeout: 15000 })
-      liveDetectRunning.value = true
-      bumpLiveMjpeg()
-    } else {
-      // 已运行：软刷新；连接异常则硬重启
-      const conn = st.connection || ''
-      if (!['connected', 'connecting', 'starting'].includes(conn)) {
-        await request(LIVE_RECONNECT_PATH, { method: 'POST', timeout: 15000 })
-      }
-      bumpLiveMjpeg()
-    }
-  } catch (e: unknown) {
-    liveVideoError.value = e instanceof Error ? e.message : '启动/重连失败'
-  } finally {
-    void pollLiveStatus()
-    liveReconnecting.value = false
-  }
-}
-
-function startLiveVideo() {
-  // 进入页面默认启动检测并绑 MJPEG
-  liveVideoStatus.value = 'connecting'
-  liveVideoError.value = ''
-  liveMjpegSrc.value = ''
-  void reconnectLiveVideo()
-  window.clearInterval(liveStatusPollTimer)
-  liveStatusPollTimer = window.setInterval(() => {
-    void pollLiveStatus()
-  }, 5000)
 }
 
 function stopLiveVideo() {
   window.clearTimeout(liveVideoRetryTimer)
-  window.clearInterval(liveStatusPollTimer)
-  liveStatusPollTimer = undefined
-  liveVideoStatus.value = 'idle'
-  liveMjpegSrc.value = ''
+  void stopLiveVideoPlayer()
 }
 
 function scheduleLiveVideoRetry() {
   window.clearTimeout(liveVideoRetryTimer)
   liveVideoRetryTimer = window.setTimeout(() => {
-    if (!liveDetectRunning.value) return
-    liveVideoStatus.value = 'connecting'
-    bumpLiveMjpeg()
-  }, 5000)
+    void startLiveVideo()
+  }, 3000)
 }
 
-/** 框图裁切预览（叠在直播画面之上；来自车身/透视框图，非 MJPEG 截帧） */
+function reconnectLiveVideo() {
+  window.clearTimeout(liveVideoRetryTimer)
+  void startLiveVideo()
+}
+
+/** 框图裁切预览（叠在 WebRTC 视频之上；来自车身/透视框图） */
 const liveCropPreviewUrl = ref('')
 const bodyPcPanelRef = ref<{ clearBoxes: () => void } | null>(null)
 const xrayBoxPanelRef = ref<{ clearBoxes: () => void } | null>(null)
@@ -1350,7 +1223,6 @@ const anyDialogOpen = computed(
     showPlcControl.value ||
     showAiStatus.value ||
     showTalkDialog.value ||
-    showDangerZone.value ||
     showDeviceStatus.value ||
     showUserMgr.value ||
     showUsrMgrDenied.value ||
@@ -1478,22 +1350,13 @@ const anyDialogOpen = computed(
           <div class="panel-header">
             <img src="/assets/img/live_video.png" class="panel-icon" alt="" />
             <span class="panel-title">实时视频</span>
-            <button
+<button
               type="button"
               class="header-icon-btn"
-              title="危险区域设置"
-              @click="showDangerZone = true"
-            >
-              <img src="/assets/img/a_plc_yellow.png" alt="危险区域" />
-            </button>
-            <button
-              type="button"
-              class="header-icon-btn"
-              :title="liveDetectRunning ? '重新连接实时视频' : '启动检测服务'"
-              :disabled="liveReconnecting"
+              title="重新连接实时视频"
               @click="reconnectLiveVideo"
             >
-              <span class="reconnect-label">{{ liveReconnecting ? '…' : '↻' }}</span>
+              <span class="reconnect-label">↻</span>
             </button>
             <button
               type="button"
@@ -1507,13 +1370,12 @@ const anyDialogOpen = computed(
             </button>
           </div>
           <div class="video-area">
-            <img
-              v-if="liveMjpegSrc"
-              :src="liveMjpegSrc"
-              class="live-mjpeg"
-              alt="实时视频"
-              @load="onLiveMjpegLoad"
-              @error="onLiveMjpegError"
+            <video
+              ref="liveVideoRef"
+              class="live-webrtc"
+              muted
+              autoplay
+              playsinline
             />
             <img
               v-if="liveCropPreviewUrl"
@@ -1651,13 +1513,7 @@ const anyDialogOpen = computed(
       v-if="showTalkDialog"
       @close="showTalkDialog = false"
     />
-
-    <DangerZoneDialog
-      v-if="showDangerZone"
-      @close="showDangerZone = false"
-    />
-
-    <!-- 农产品选择弹窗 -->
+<!-- 农产品选择弹窗 -->
     <AgriculturalSelect
       ref="agriculturalSelectRef"
       @confirm="onAgriculturalConfirm"
@@ -2086,8 +1942,7 @@ const anyDialogOpen = computed(
   overflow: hidden;
 }
 
-.live-webrtc,
-.live-mjpeg {
+.live-webrtc {
   position: absolute;
   inset: 0;
   width: 100%;
