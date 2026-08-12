@@ -392,6 +392,8 @@ const captureButtons = [
 ]
 
 type CaptureKey = (typeof captureButtons)[number]['key']
+/** 缩略图槽位：采集按钮 + 通行码图（非按钮） */
+type ThumbKey = CaptureKey | 'passcode'
 
 const captureDialog = ref<CaptureKind | null>(null)
 const showLicenseDialog = ref(false)
@@ -606,7 +608,7 @@ function onDeleteXrayBoxes() {
 const showVideoHint = computed(() => true)
 
 /** 各格缩略图（blob/url），对齐 Qt setIcon 回写 */
-const captureThumbs = ref<Partial<Record<CaptureKey, string>>>({})
+const captureThumbs = ref<Partial<Record<ThumbKey, string>>>({})
 /** 多图列表：货物 / 证据 */
 const captureLists = ref<{ goods: string[]; evidence: string[] }>({
   goods: [],
@@ -704,7 +706,7 @@ function onBookingReject() {
 }
 
 /** WS 来车/按键预约 → 自动弹窗 */
-function handleBookingComing(msg: { data?: BookingComingPayload | Record<string, unknown> }) {
+function handleBookingComing(msg: { data?: unknown }) {
   const data = (msg.data ?? {}) as BookingComingPayload
   const action = data.action
   // push_booking_event: coming / book_button；或纯 booking_request

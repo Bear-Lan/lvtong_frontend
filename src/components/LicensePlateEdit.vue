@@ -54,7 +54,7 @@ const COLOR_OPTIONS = [
   { value: '12', label: '红色' },
 ] as const
 
-const VALID_COLORS = new Set(COLOR_OPTIONS.map((c) => c.value))
+const VALID_COLORS = new Set<string>(COLOR_OPTIONS.map((c) => c.value))
 
 const visible = ref(false)
 const plate = ref('')

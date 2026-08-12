@@ -125,8 +125,10 @@ function applyStatus(d: Record<string, unknown>) {
   states.value.lightsource160 = !!(d.lightSource160Status ?? d.lightsource160)
 }
 
-function onWsPlcStatus(msg: { data?: Record<string, unknown> }) {
-  if (msg.data) applyStatus(msg.data)
+function onWsPlcStatus(msg: { data?: unknown }) {
+  if (msg.data && typeof msg.data === 'object') {
+    applyStatus(msg.data as Record<string, unknown>)
+  }
 }
 
 function onSysMenuDocClick() {

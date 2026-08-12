@@ -220,7 +220,7 @@ const passCodeSrc = computed(() => {
   return ''
 })
 
-function imgSrc(path?: string | null, fallback = IMAGE_PLACEHOLDER.default) {
+function imgSrc(path?: string | null, fallback: string = IMAGE_PLACEHOLDER.default) {
   if (isBrowsableImageUrl(path)) return path!
   return fallback
 }

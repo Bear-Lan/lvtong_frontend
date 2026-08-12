@@ -106,7 +106,7 @@ export const useBookingStore = defineStore('booking', () => {
     isCheckXRay.value = state.is_check_xray ?? isCheckXRay.value
     bookingDialogShown.value = !!state.booking_dialog_shown
     // 同步时间字段（如果后端 state 里有）
-    const s = state as Record<string, unknown>
+    const s = state as unknown as Record<string, unknown>
     if (typeof s.btn_prebook_time === 'string') btnPrebookTime.value = s.btn_prebook_time
     if (typeof s.acceptance_time === 'string') acceptanceTime.value = s.acceptance_time
     if (typeof s.opengate_time === 'string') opengateTime.value = s.opengate_time
