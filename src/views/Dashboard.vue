@@ -648,6 +648,19 @@ function doReset() {
   workflow.value.cdPhotoTime = ''
 }
 
+/** 车顶照：只用图像采集区域（手机上传 / 浏览器拍照），不用车身影像雷达测顶 */
+function resolveTopImageRef(): string {
+  return captureThumbs.value.top || ''
+}
+
+/** 出口称重：主页 form.weight；提交时若仍空则回退通行码 exWeight */
+function resolveExitWeight(): string {
+  const fromForm = String(form.value.weight ?? '').trim()
+  if (fromForm) return fromForm
+  const fromPc = passcode.value?.valid ? String(passcode.value.exWeight ?? '').trim() : ''
+  return fromPc
+}
+
 function buildSubmitPreview(): InspectionDetail {
   const plate = form.value.plate === '--' ? '' : form.value.plate
   const truck = truckTypeOptions.value.find((t) => t.type_code === form.value.truckType)
@@ -664,6 +677,7 @@ function buildSubmitPreview(): InspectionDetail {
     .filter(Boolean)
     .join('|')
   const pc = passcode.value?.valid ? passcode.value : null
+  const exitWeight = resolveExitWeight()
 
   return {
     id: 0,
@@ -677,11 +691,11 @@ function buildSubmitPreview(): InspectionDetail {
     goods_type: form.value.goodsProductCode || form.value.goods,
     goods_name: form.value.goods,
     load_rate: parseFloat(form.value.loadRate) || 0,
-    load_weight: parseFloat(form.value.weight) || 0,
+    load_weight: parseFloat(exitWeight) || 0,
     vehicle_size: form.value.size,
     head_image_path: toApiUrl(captureThumbs.value.head || '') || undefined,
     tail_image_path: toApiUrl(captureThumbs.value.tail || '') || undefined,
-    top_image_path: toApiUrl(bodyImageUrls.value.top || captureThumbs.value.top || '') || undefined,
+    top_image_path: toApiUrl(resolveTopImageRef()) || undefined,
     body_image_path: toApiUrl(bodyImageUrls.value.body || '') || undefined,
     transparent_image_path:
       toApiUrl(xrayDisplayUrl.value || xrayImageUrls.value['200'] || '') || undefined,
@@ -699,7 +713,8 @@ function buildSubmitPreview(): InspectionDetail {
     pass_code_en_station_id: pc?.enStationId,
     pass_code_ex_station_id: pc?.exStationId,
     pass_code_en_weight: pc?.enWeight,
-    pass_code_ex_weight: pc?.exWeight,
+    // 与主页「出口称重」一致：优先 form，回退通行码
+    pass_code_ex_weight: exitWeight || pc?.exWeight,
     pass_code_media_type_id: pc != null ? String(pc.mediaTypeId || '') : undefined,
     pass_code_transaction_id: pc?.transactionId,
     pass_code_pass_id: pc?.passId,
@@ -763,13 +778,14 @@ async function onSubmitConfirmYes(payload?: {
     goods_type: form.value.goodsProductCode || form.value.goods,
     goods_name: form.value.goods,
     load_rate: parseFloat(form.value.loadRate) || 0,
-    load_weight: parseFloat(form.value.weight) || 0,
+    load_weight: parseFloat(resolveExitWeight()) || 0,
     vehicle_size: form.value.size,
     // 8 个图片路径（Qt m_*ImagePath）
     head_image_path: toStoragePath(captureThumbs.value.head || ''),
     tail_image_path: toStoragePath(captureThumbs.value.tail || ''),
     body_image_path: toStoragePath(bodyImageUrls.value.body || ''),
-    top_image_path: toStoragePath(bodyImageUrls.value.top || ''),
+    // 车顶：图像采集区域（与预览一致），不用车身影像雷达测顶
+    top_image_path: toStoragePath(resolveTopImageRef()),
     transparent_image_path: toStoragePath(xrayImageUrls.value['200'] || ''),
     // 通行码 QR 图（对齐 Qt m_codeImagePath，flask 后端生成）
     passcode_image_path: toStoragePath(captureThumbs.value.passcode || ''),
@@ -1030,6 +1046,7 @@ function setupWS() {
           goods_type?: string
           head_image_path?: string
           body_image_path?: string
+          top_image_path?: string
           tail_image_path?: string
           passcode_image_path?: string
           license_image_path1?: string
@@ -1044,10 +1061,17 @@ function setupWS() {
     if (data.head_image_path) captureThumbs.value.head = toImageUrl(data.head_image_path)
     if (data.tail_image_path) captureThumbs.value.tail = toImageUrl(data.tail_image_path)
     if (data.body_image_path) bodyImageUrls.value.body = toImageUrl(data.body_image_path)
+    // 手机车顶图 → 图像采集区域（与浏览器拍照同一槽位）
+    if (data.top_image_path) captureThumbs.value.top = toImageUrl(data.top_image_path)
     // passcode_image_path 是 flask 后端用 QR 库生成的（对齐 Qt QZXing::encodeData）
     if (data.passcode_image_path) captureThumbs.value.passcode = toImageUrl(data.passcode_image_path)
     if (data.license_image_path1) licensePaths.value.license = toImageUrl(data.license_image_path1)
     if (data.license_image_path2) licensePaths.value.licenseGc = toImageUrl(data.license_image_path2)
+    // 主页缩略图读的是 captureThumbs.license；原先只写了 licensePaths，要点开行驶证弹窗确认后才有图
+    if (data.license_image_path1 || data.license_image_path2) {
+      captureThumbs.value.license =
+        licensePaths.value.license || licensePaths.value.licenseGc || ''
+    }
 
     // 货物图（多张，| 分隔 — 对齐 Qt getGoodImgListPath()）
     if (data.goods_image_path) {
@@ -1071,12 +1095,18 @@ function setupWS() {
       // 对齐 Qt ui.lineEdit_goods->setProperty('productCode', ...)
       form.value.goodsProductCode = data.goods_type
     }
+    // 若本包自带 passcode，同步主页出口称重（mobile_passcode 事件也会再填一次）
+    const embedded = (data as { passcode?: { valid?: boolean; exWeight?: string } }).passcode
+    if (embedded?.valid && embedded.exWeight != null && String(embedded.exWeight).trim() !== '') {
+      form.value.weight = String(embedded.exWeight).trim()
+    }
 
     console.info(
       `[mobile_upload] session=${data.sessionId} plate_gc=${data.plate_number_gc} ` +
       `phone=${data.phone} head=${!!data.head_image_path} body=${!!data.body_image_path} ` +
-      `license1=${!!data.license_image_path1} license2=${!!data.license_image_path2} ` +
-      `goods=${!!data.goods_image_path} evidences=${!!data.evidences_image_path}`,
+      `top=${!!data.top_image_path} license1=${!!data.license_image_path1} ` +
+      `license2=${!!data.license_image_path2} goods=${!!data.goods_image_path} ` +
+      `evidences=${!!data.evidences_image_path} exWeight=${embedded?.exWeight ?? ''}`,
     )
   })
 
@@ -1085,12 +1115,16 @@ function setupWS() {
     const pc = msg.data as typeof passcode.value
     if (!pc || !pc.valid) return
     passcode.value = pc
-    // 对齐 Qt dispVhicleLicQRInfoToMainUI：自动填车牌 + 颜色
+    // 对齐 Qt dispVhicleLicQRInfoToMainUI：自动填车牌 + 颜色 + 出口称重
     if (pc.vehicleDisplayId) form.value.plate = pc.vehicleDisplayId
     if (pc.vehicleColorName) form.value.plateColor = pc.vehicleColorName
+    // 原先只写了 passcode ref，主页 form.weight 未赋值 → 提交页有值、主页空白
+    if (pc.exWeight != null && String(pc.exWeight).trim() !== '') {
+      form.value.weight = String(pc.exWeight).trim()
+    }
     console.info(
       `[mobile_passcode] vehicle=${pc.vehicleDisplayId} color=${pc.vehicleColorName} ` +
-      `enSta=${pc.enStationId} exSta=${pc.exStationId} fee=${pc.fee}`,
+      `enSta=${pc.enStationId} exSta=${pc.exStationId} exWeight=${pc.exWeight} fee=${pc.fee}`,
     )
   })
 }
