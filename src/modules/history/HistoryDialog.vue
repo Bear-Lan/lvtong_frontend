@@ -9,6 +9,20 @@ import DetailDialog from './DetailDialog.vue'
 import type { HistoryRecord, HistorySearchCriteria } from './types'
 import QtMessageBox from '@/components/common/QtMessageBox.vue'
 
+const props = withDefaults(
+  defineProps<{
+    /** 主页查验次数点入：预填车牌与时间范围（API 时间或 datetime-local） */
+    initialPlate?: string
+    initialStartTime?: string
+    initialEndTime?: string
+  }>(),
+  {
+    initialPlate: '',
+    initialStartTime: '',
+    initialEndTime: '',
+  },
+)
+
 const emit = defineEmits<{
   close: []
 }>()
@@ -32,7 +46,6 @@ const driverPhone = ref('')
 const operatorName = ref('')
 const startTime = ref('')
 const endTime = ref('')
-
 const totalPages = computed(() => Math.max(1, Math.ceil(total.value / pageSize.value) || 1))
 
 const paginationInfo = computed(() => {
@@ -71,6 +84,23 @@ function toInputValue(d: Date, endOfDay: boolean) {
   const day = pad(d.getDate())
   if (endOfDay) return `${y}-${m}-${day}T23:59`
   return `${y}-${m}-${day}T00:00`
+}
+
+/** ISO / DB 时间 → datetime-local 值 */
+function isoToLocalInput(raw: string, endOfDay: boolean): string {
+  if (!raw) return ''
+  const d = new Date(raw)
+  if (!Number.isNaN(d.getTime())) {
+    const y = d.getFullYear()
+    const m = pad(d.getMonth() + 1)
+    const day = pad(d.getDate())
+    const hh = pad(d.getHours())
+    const mm = pad(d.getMinutes())
+    return `${y}-${m}-${day}T${hh}:${mm}`
+  }
+  const s = raw.replace(' ', 'T').slice(0, 16)
+  if (s.length >= 16) return s
+  return endOfDay ? `${raw.slice(0, 10)}T23:59` : `${raw.slice(0, 10)}T00:00`
 }
 
 /** API 用：补全秒，对齐 Qt 00:00:00 / 23:59:59 */
@@ -234,7 +264,21 @@ async function onExport() {
 }
 
 onMounted(async () => {
-  defaultDateRange()
+  const presetPlate = (props.initialPlate || '').trim()
+  if (presetPlate) {
+    plateNumber.value = presetPlate
+    startTime.value = props.initialStartTime
+      ? isoToLocalInput(props.initialStartTime, false)
+      : ''
+    endTime.value = props.initialEndTime
+      ? isoToLocalInput(props.initialEndTime, true)
+      : ''
+    if (!startTime.value || !endTime.value) {
+      defaultDateRange()
+    }
+  } else {
+    defaultDateRange()
+  }
   operators.value = await fetchOperators()
   await loadData()
 })

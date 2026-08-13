@@ -24,6 +24,7 @@ import QtMessageBox from '@/components/common/QtMessageBox.vue'
 import HistoryDialog from '@/modules/history/HistoryDialog.vue'
 import DetailDialog from '@/modules/history/DetailDialog.vue'
 import type { InspectionDetail } from '@/modules/history'
+import { formatVehicleSizeDisplay } from '@/modules/history/utils/passCodeDisplay'
 import CaptureCameraDialog from '@/components/capture/CaptureCameraDialog.vue'
 import type { CaptureKind } from '@/components/capture/CaptureCameraDialog.vue'
 import DrivingLicenseDialog from '@/components/capture/DrivingLicenseDialog.vue'
@@ -40,6 +41,14 @@ const bookingStore = useBookingStore()
 const router = useRouter()
 
 const showHistory = ref(false)
+/** 从查验次数打开历史时的预填条件 */
+const historyPreset = ref<{
+  plate: string
+  startTime: string
+  endTime: string
+} | null>(null)
+/** 当前车牌历史最早/最晚查验时间（供点查验次数用） */
+const plateHistoryRange = ref<{ earliest: string; latest: string } | null>(null)
 const showPlcControl = ref(false)
 const showAiStatus = ref(false)
 const showDeviceStatus = ref(false)
@@ -343,8 +352,11 @@ function onEditPlate() {
 function onPlateConfirm(plate: string, color: string) {
   form.value.plate = plate || '--'
   form.value.plateColor = color
-  // 查询查验次数
-  if (plate) checkHistoryCount(plate)
+  if (plate && plate !== '--') void applyPlateHistory(plate)
+  else {
+    form.value.historyCount = '--'
+    plateHistoryRange.value = null
+  }
 }
 function onEditPlateGC() {
   licensePlateGCRef.value?.show()
@@ -354,24 +366,90 @@ function onPlateGCConfirm(plate: string, color: string) {
   form.value.plateGcColor = color
 }
 
-// ---- 查验次数 ----
-async function checkHistoryCount(plate: string) {
+type PlateHistoryData = {
+  count: number
+  driver_phone?: string
+  gc_plate?: string
+  vehicle_type?: string
+  vehicle_container_type?: string
+  vehicle_size?: string
+  license_image_path?: string
+  license_image_path1?: string
+  earliest_time?: string
+  latest_time?: string
+}
+
+/** 车牌赋值后：查过往记录 → 回填字段 + 查验次数 */
+async function applyPlateHistory(plate: string) {
+  const p = plate.trim()
+  if (!p || p === '--') {
+    form.value.historyCount = '--'
+    plateHistoryRange.value = null
+    return
+  }
   try {
-    const res = await request<{ count: number; driver_phone: string; gc_plate: string }>(
-      `/inspection/plate/${encodeURIComponent(plate)}`
+    const res = await request<PlateHistoryData>(
+      `/inspection/plate/${encodeURIComponent(p)}`,
     )
-    if (res.code === 0 && res.data) {
-      form.value.historyCount = String(res.data.count || '--')
-      if (res.data.driver_phone && !form.value.phone) {
-        form.value.phone = res.data.driver_phone
+    if (res.code !== 0 || !res.data) {
+      form.value.historyCount = '--'
+      plateHistoryRange.value = null
+      return
+    }
+    const d = res.data
+    const count = Number(d.count) || 0
+    form.value.historyCount = count > 0 ? String(count) : '0'
+    if (d.earliest_time && d.latest_time) {
+      plateHistoryRange.value = {
+        earliest: d.earliest_time,
+        latest: d.latest_time,
       }
-      if (res.data.gc_plate && form.value.plateGc === '--') {
-        form.value.plateGc = res.data.gc_plate
+    } else {
+      plateHistoryRange.value = null
+    }
+    if (count <= 0) return
+
+    // 有历史则回填（仅覆盖有值的历史字段）
+    if (d.driver_phone) form.value.phone = d.driver_phone
+    if (d.gc_plate) form.value.plateGc = d.gc_plate
+    if (d.vehicle_type) form.value.truckType = d.vehicle_type
+    if (d.vehicle_container_type) form.value.containerType = d.vehicle_container_type
+    if (d.vehicle_size) {
+      form.value.size = /长/.test(d.vehicle_size)
+        ? d.vehicle_size
+        : formatVehicleSizeDisplay(d.vehicle_size)
+    }
+    // 行驶证照片 → 弹窗路径 + 主页缩略图
+    if (d.license_image_path || d.license_image_path1) {
+      const lic = d.license_image_path ? toImageUrl(d.license_image_path) : ''
+      const licGc = d.license_image_path1 ? toImageUrl(d.license_image_path1) : ''
+      licensePaths.value = {
+        license: lic || licensePaths.value.license,
+        licenseGc: licGc || licensePaths.value.licenseGc,
       }
+      captureThumbs.value.license =
+        licensePaths.value.license || licensePaths.value.licenseGc || ''
     }
   } catch {
-    // ignore
+    form.value.historyCount = '--'
+    plateHistoryRange.value = null
   }
+}
+
+function onHistoryCountClick() {
+  const plate = form.value.plate === '--' ? '' : form.value.plate.trim()
+  if (!plate) return
+  historyPreset.value = {
+    plate,
+    startTime: plateHistoryRange.value?.earliest || '',
+    endTime: plateHistoryRange.value?.latest || '',
+  }
+  showHistory.value = true
+}
+
+function onHistoryClose() {
+  showHistory.value = false
+  historyPreset.value = null
 }
 
 // ---- 图像采集 — 对齐 btn_head/tail/top/goods/license/evidence ----
@@ -625,6 +703,8 @@ function doReset() {
     historyCount: '--',
   }
   previousSelection.value = []
+  plateHistoryRange.value = null
+  historyPreset.value = null
   // 清图片（对齐 Qt clearFormData 清除所有图片缩略图）
   captureThumbs.value = {}
   captureLists.value = { goods: [], evidence: [] }
@@ -1123,6 +1203,8 @@ function setupWS() {
     if (pc.exWeight != null && String(pc.exWeight).trim() !== '') {
       form.value.weight = String(pc.exWeight).trim()
     }
+    // 车牌赋值后查历史回填 + 查验次数
+    if (pc.vehicleDisplayId) void applyPlateHistory(pc.vehicleDisplayId)
     console.info(
       `[mobile_passcode] vehicle=${pc.vehicleDisplayId} color=${pc.vehicleColorName} ` +
       `enSta=${pc.enStationId} exSta=${pc.exStationId} exWeight=${pc.exWeight} fee=${pc.fee}`,
@@ -1138,6 +1220,7 @@ function onStopClick() {
 /** 顶栏工具 — 对齐 onHistoryClicked / onPlcControl / onWebServiceClicked / onSettingClicked */
 function onHeaderToolClick(key: string, anchor?: ToolAnchor) {
   if (key === 'history') {
+    historyPreset.value = null
     showHistory.value = true
     return
   }
@@ -1523,7 +1606,15 @@ const anyDialogOpen = computed(
               <input v-model="form.weight" class="field-input" placeholder="出口称重（kg）" />
               <span class="col-gap" />
               <label class="col-right">查验次数：</label>
-              <span class="field-value">{{ form.historyCount }}</span>
+              <button
+                type="button"
+                class="field-value field-link"
+                :disabled="form.plate === '--'"
+                title="查看该车查验历史"
+                @click="onHistoryCountClick"
+              >
+                {{ form.historyCount }}
+              </button>
             </div>
           </div>
 
@@ -1638,7 +1729,10 @@ const anyDialogOpen = computed(
     <!-- 历史记录查询 — 对齐 HistoryDialog -->
     <HistoryDialog
       v-if="showHistory"
-      @close="showHistory = false"
+      :initial-plate="historyPreset?.plate || ''"
+      :initial-start-time="historyPreset?.startTime || ''"
+      :initial-end-time="historyPreset?.endTime || ''"
+      @close="onHistoryClose"
     />
 
     <!-- 急停确认 — 对齐 QMessageBox::question 系统提醒 / 确定执行急停操作？ -->
@@ -2109,6 +2203,25 @@ const anyDialogOpen = computed(
   font-size: 14px;
   color: $text-gray;
   padding: 2px 8px;
+}
+
+.field-link {
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  color: #1565c0;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  font: inherit;
+  text-align: left;
+  &:disabled {
+    cursor: default;
+    color: $text-gray;
+    text-decoration: none;
+  }
+  &:not(:disabled):hover {
+    color: #0d47a1;
+  }
 }
 
 .icon-btn {
