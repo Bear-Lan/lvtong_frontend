@@ -690,7 +690,7 @@ function buildSubmitPreview(): InspectionDetail {
     vehicle_container_name: container?.type_name || '',
     goods_type: form.value.goodsProductCode || form.value.goods,
     goods_name: form.value.goods,
-    load_rate: parseFloat(form.value.loadRate) || 0,
+    load_rate: form.value.loadRate.trim() === '' ? 0 : parseFloat(form.value.loadRate) || 0,
     load_weight: parseFloat(exitWeight) || 0,
     vehicle_size: form.value.size,
     head_image_path: toApiUrl(captureThumbs.value.head || '') || undefined,
@@ -777,7 +777,8 @@ async function onSubmitConfirmYes(payload?: {
     vehicle_container_type: form.value.containerType,
     goods_type: form.value.goodsProductCode || form.value.goods,
     goods_name: form.value.goods,
-    load_rate: parseFloat(form.value.loadRate) || 0,
+    // 满载率可空：提交时前端补 0（勿传空串给 numeric 列）
+    load_rate: form.value.loadRate.trim() === '' ? 0 : parseFloat(form.value.loadRate) || 0,
     load_weight: parseFloat(resolveExitWeight()) || 0,
     vehicle_size: form.value.size,
     // 8 个图片路径（Qt m_*ImagePath）

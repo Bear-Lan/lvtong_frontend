@@ -243,7 +243,10 @@ function applyRecord(data: InspectionDetail) {
     data.vehicle_size && /长/.test(data.vehicle_size)
       ? data.vehicle_size
       : formatVehicleSizeDisplay(data.vehicle_size)
-  loadRate.value = data.load_rate != null ? String(data.load_rate) : ''
+  loadRate.value =
+    data.load_rate != null && !Number.isNaN(Number(data.load_rate))
+      ? String(data.load_rate)
+      : ''
   driverPhone.value = data.driver_phone || ''
   remark.value = data.history_record || ''
   inspectorPhone.value = data.inspector_phone || ''
@@ -380,11 +383,93 @@ watch(resultStatus, (v) => {
   }
 })
 
+/** 提交确认：有真实图（占位 /assets 不算） */
+function hasRealImage(path?: string | null): boolean {
+  if (!path || !String(path).trim()) return false
+  const p = String(path).trim()
+  if (p.startsWith('/assets/')) return false
+  return isBrowsableImageUrl(p)
+}
+
+function isBlank(v: unknown): boolean {
+  if (v == null) return true
+  return String(v).trim() === ''
+}
+
+/**
+ * 提交确认校验。
+ * 可空：备注内容、查验依据、复核、证件照、满载率。
+ * 交易支付方式显示「未知」也算有值。
+ * 其余表单字段必填；图片（不含证件照）至少一张。
+ */
+function validateSubmitConfirm(): string | null {
+  const r = record.value
+  if (!r) return '没有可提交的数据'
+
+  const missing: string[] = []
+  const need = (label: string, ok: boolean) => {
+    if (!ok) missing.push(label)
+  }
+
+  // 左列 — 通行码信息
+  need('入口站名称', !isBlank(enStationName.value) || !isBlank(r.pass_code_en_station_id))
+  need('出口站名称', !isBlank(exStationName.value) || !isBlank(r.pass_code_ex_station_id))
+  need('出口交易时间', !isBlank(r.pass_code_ex_time))
+  need('总交易金额', !isBlank(r.pass_code_fee))
+  need('通行介质', !isBlank(r.pass_code_media_type_id))
+  need('通过省份个数', !isBlank(r.pass_code_province_count))
+  need('出口交易编号', !isBlank(r.pass_code_transaction_id))
+  need('通行标识ID', !isBlank(r.pass_code_pass_id))
+  need('通行码', hasRealImage(r.pass_code_image_path))
+
+  // 中列
+  need('货车类型', !isBlank(truckType.value))
+  need('货箱类型', !isBlank(containerType.value))
+  need('货物名称', !isBlank(goodsName.value))
+  need('入口称重', !isBlank(r.pass_code_en_weight))
+  need('出口称重', !isBlank(r.pass_code_ex_weight))
+  need('应收金额', !isBlank(r.pass_code_pay_fee))
+  // 交易支付方式：未知也算有值（不校验）
+  need('车辆状态标识', !isBlank(r.pass_code_vehicle_sign))
+  // 备注内容 — 可空
+
+  // 右列
+  need('车牌号码', !isBlank(plateNumber.value) && plateNumber.value !== '--')
+  need('长宽高', !isBlank(vehicleSizeDisplay.value))
+  // 满载率 — 可空
+  need('司机电话', !isBlank(driverPhone.value))
+  if (!isBlank(driverPhone.value) && String(driverPhone.value).trim().length !== 11) {
+    missing.push('司机电话(须11位)')
+  }
+  // 查验依据 / 复核 — 可空
+  need('查验', !isBlank(inspectorPhone.value))
+  need('查验结果', resultStatus.value === 0 || resultStatus.value === 1)
+  if (resultStatus.value === 1 && !noPassType.value) {
+    missing.push('不合格类型')
+  }
+
+  // 图片：证件照可空；车头/车尾/车顶/车身/透视/货物/证据/通行码 至少一张
+  const imageOk =
+    hasRealImage(r.head_image_path) ||
+    hasRealImage(r.tail_image_path) ||
+    hasRealImage(r.top_image_path) ||
+    hasRealImage(r.body_image_path) ||
+    hasRealImage(r.transparent_image_path) ||
+    hasRealImage(r.pass_code_image_path) ||
+    splitImagePaths(r.goods_image_path).some((p) => hasRealImage(p)) ||
+    splitImagePaths(r.evidences_image_path).some((p) => hasRealImage(p))
+  if (!imageOk) missing.push('图片(至少一张，证件照除外)')
+
+  if (!missing.length) return null
+  return `请完善后再提交：${missing.join('、')}`
+}
+
 function onConfirmSubmit() {
   if (!isSubmitMode.value) return
-  if (resultStatus.value === 1 && !noPassType.value) {
+  const err = validateSubmitConfirm()
+  if (err) {
     tipOk.value = false
-    tipMessage.value = '请选择不合格类型'
+    tipMessage.value = err
     tipVisible.value = true
     return
   }
