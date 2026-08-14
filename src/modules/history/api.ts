@@ -86,15 +86,18 @@ export async function fetchNoPassTypes(): Promise<NoPassOption[]> {
   return res.code === 0 && res.data ? res.data : []
 }
 
+/** 收费站 ID → 显示名。有 ID 但本地库查不到时显示「站点待更新」（仅展示，落库仍存 ID） */
 export async function fetchStationName(stationId?: string): Promise<string> {
-  if (!stationId) return ''
+  if (!stationId?.trim()) return ''
   try {
-    const res = await request<{ station_name?: string }>(`/dict/stations/${encodeURIComponent(stationId)}`)
+    const res = await request<{ station_name?: string }>(
+      `/dict/stations/${encodeURIComponent(stationId)}`,
+    )
     if (res.code === 0 && res.data?.station_name) return res.data.station_name
   } catch {
-    // 404 或未配置时回退 ID
+    // 404 / 网络错误：走缺省显示
   }
-  return stationId
+  return '站点待更新'
 }
 
 /** 查验/复核人员 — 对齐 getUsersByRole(1) */
