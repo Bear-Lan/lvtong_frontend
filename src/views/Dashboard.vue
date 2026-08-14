@@ -35,6 +35,7 @@ import { toApiUrl, toStoragePath, joinImagePaths } from '@/utils/imagePath'
 import { processImage } from '@/utils/imageProcess'
 import { useWhepPlayer } from '@/composables/useWhepPlayer'
 import { DEFAULT_WHEP_URL } from '@/config/liveVideo'
+import { appConfig } from '@/config/env'
 const auth = useAuthStore()
 const wsStore = useWsStore()
 const bookingStore = useBookingStore()
@@ -332,6 +333,95 @@ function onAgriculturalConfirm(items: { productCode: string; varietyName: string
     form.value.goodsVarietyPinYin = ''
   }
 }
+
+/** AI 满载率（静默）：透视拼接图 + 货箱类型齐全时自动调用；厢式→方案1，其他→方案2 */
+const aiLoadRateBusy = ref(false)
+let aiLoadRateSeq = 0
+let aiLoadRateLastKey = ''
+let aiLoadRateTimer: ReturnType<typeof setTimeout> | null = null
+
+async function runAiLoadRateSilent(mosaic: string, containerCode: string, containerName: string) {
+  const key = `${mosaic}||${containerCode}`
+  if (aiLoadRateBusy.value && aiLoadRateLastKey === key) return
+  aiLoadRateLastKey = key
+  const seq = ++aiLoadRateSeq
+  aiLoadRateBusy.value = true
+  try {
+    const imgRes = await fetch(mosaic)
+    if (!imgRes.ok) throw new Error(`读取拼接图失败: HTTP ${imgRes.status}`)
+    const blob = await imgRes.blob()
+    const fd = new FormData()
+    fd.append('image', new File([blob], 'mosaic.jpg', { type: blob.type || 'image/jpeg' }))
+    fd.append('container_type_code', containerCode)
+    fd.append('container_type_name', containerName)
+
+    const token =
+      localStorage.getItem('lvtong_token') || sessionStorage.getItem('lvtong_token')
+    const headers: Record<string, string> = {}
+    if (token) headers.Authorization = `Bearer ${token}`
+
+    const controller = new AbortController()
+    const timer = setTimeout(() => controller.abort(), 120000)
+    let res: Response
+    try {
+      res = await fetch(`${appConfig.apiBaseUrl}/imaging/ai-load-rate`, {
+        method: 'POST',
+        headers,
+        body: fd,
+        signal: controller.signal,
+      })
+    } finally {
+      clearTimeout(timer)
+    }
+
+    const json = (await res.json()) as {
+      code: number
+      message?: string
+      data?: { load_rate_pct?: number; scheme?: string }
+    }
+    if (seq !== aiLoadRateSeq) return
+    if (!res.ok || json.code !== 0 || json.data?.load_rate_pct == null) {
+      console.warn('[AI满载率]', json.message || `HTTP ${res.status}`)
+      return
+    }
+    form.value.loadRate = String(json.data.load_rate_pct)
+    console.info(
+      `[AI满载率] ${json.data.load_rate_pct}% (${json.data.scheme === 'scheme1_box' ? '厢式·方案1' : '其他·方案2'})`,
+    )
+  } catch (e) {
+    if (seq !== aiLoadRateSeq) return
+    console.warn('[AI满载率]', e instanceof Error ? e.message : e)
+  } finally {
+    if (seq === aiLoadRateSeq) aiLoadRateBusy.value = false
+  }
+}
+
+function scheduleAiLoadRate() {
+  if (aiLoadRateTimer) clearTimeout(aiLoadRateTimer)
+  aiLoadRateTimer = setTimeout(() => {
+    aiLoadRateTimer = null
+    const mosaic = xrayImageUrls.value.mosaic
+    const code = form.value.containerType
+    if (!mosaic || !code) return
+    const container = containerTypeOptions.value.find((t) => t.type_code === code)
+    const name = container?.type_name || ''
+    if (!name) return
+    const key = `${mosaic}||${code}`
+    if (key === aiLoadRateLastKey && form.value.loadRate !== '') return
+    void runAiLoadRateSilent(mosaic, code, name)
+  }, 400)
+}
+
+watch(
+  () => [xrayImageUrls.value.mosaic, form.value.containerType] as const,
+  ([mosaic, code]) => {
+    if (!mosaic || !code) {
+      aiLoadRateLastKey = ''
+      return
+    }
+    scheduleAiLoadRate()
+  },
+)
 
 // ---- 车牌编辑 ----
 const licensePlateRef = ref<InstanceType<typeof LicensePlateEdit> | null>(null)
@@ -713,6 +803,12 @@ function doReset() {
   xrayImageUrls.value = { '200': '', '160': '', mosaic: '' }
   liveCropPreviewUrl.value = ''
   resetXrayProcessState()
+  aiLoadRateLastKey = ''
+  aiLoadRateSeq += 1
+  if (aiLoadRateTimer) {
+    clearTimeout(aiLoadRateTimer)
+    aiLoadRateTimer = null
+  }
   // 清通行码
   passcode.value = null
   // 清工作流状态
