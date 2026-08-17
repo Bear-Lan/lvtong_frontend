@@ -423,6 +423,152 @@ watch(
   },
 )
 
+/** AI 货车/货箱类型（静默）：车身影像「车身图」到位后自动识别 */
+const aiTruckRealBusy = ref(false)
+let aiTruckRealSeq = 0
+let aiTruckRealLastKey = ''
+let aiTruckRealLastWheel = 0
+let aiTruckRealTimer: ReturnType<typeof setTimeout> | null = null
+
+/** 两轮车：蓝牌(0)/渐变绿(4)→一型，有色其余→二型；未选色/车牌空不赋值。与后端一致 */
+function isUsablePlate(plate: string): boolean {
+  const p = String(plate || '').trim()
+  return !!p && p !== '--' && p !== '-' && p !== '无'
+}
+
+function truckTypeFromWheels(wheelCount: number, plateColor: string, plate: string): string {
+  const axles = Number(wheelCount) || 0
+  if (axles <= 0) return ''
+  if (axles <= 2) {
+    const c = String(plateColor || '').trim()
+    if (!c || !isUsablePlate(plate)) return '' // 未选色 / 车牌空 → 不赋值
+    if (c === '0' || c === '4' || c === '蓝色' || c === '蓝牌' || c === '渐变绿' || c === '渐变绿色') {
+      return '11'
+    }
+    return '12'
+  }
+  if (axles >= 7) return '16'
+  return String(9 + axles)
+}
+
+function applyTruckTypeFromLastWheels() {
+  if (aiTruckRealLastWheel <= 0 || aiTruckRealLastWheel > 2) return
+  const code = truckTypeFromWheels(
+    aiTruckRealLastWheel,
+    form.value.plateColor,
+    form.value.plate,
+  )
+  // 两轮：可判定则赋值；无法判定则清空（避免沿用错误的一/二型）
+  form.value.truckType = code
+}
+
+async function runAiTruckRealSilent(bodyUrl: string) {
+  if (aiTruckRealBusy.value && aiTruckRealLastKey === bodyUrl) return
+  aiTruckRealLastKey = bodyUrl
+  const seq = ++aiTruckRealSeq
+  aiTruckRealBusy.value = true
+  try {
+    const imgRes = await fetch(bodyUrl)
+    if (!imgRes.ok) throw new Error(`读取车身图失败: HTTP ${imgRes.status}`)
+    const blob = await imgRes.blob()
+    const fd = new FormData()
+    fd.append('image', new File([blob], 'body.jpg', { type: blob.type || 'image/jpeg' }))
+    if (form.value.plateColor) {
+      fd.append('plate_color', form.value.plateColor)
+    }
+    if (isUsablePlate(form.value.plate)) {
+      fd.append('plate_number', form.value.plate)
+    }
+
+    const token =
+      localStorage.getItem('lvtong_token') || sessionStorage.getItem('lvtong_token')
+    const headers: Record<string, string> = {}
+    if (token) headers.Authorization = `Bearer ${token}`
+
+    const controller = new AbortController()
+    const timer = setTimeout(() => controller.abort(), 120000)
+    let res: Response
+    try {
+      res = await fetch(`${appConfig.apiBaseUrl}/imaging/ai-truck-real`, {
+        method: 'POST',
+        headers,
+        body: fd,
+        signal: controller.signal,
+      })
+    } finally {
+      clearTimeout(timer)
+    }
+
+    const json = (await res.json()) as {
+      code: number
+      message?: string
+      data?: {
+        vehicle_type?: string
+        vehicle_container_type?: string
+        wheel_count?: number
+        cratetype?: string
+      }
+    }
+    if (seq !== aiTruckRealSeq) return
+    if (!res.ok || json.code !== 0 || !json.data) {
+      console.warn('[AI货车识别]', json.message || `HTTP ${res.status}`)
+      return
+    }
+    const d = json.data
+    aiTruckRealLastWheel = Number(d.wheel_count) || 0
+    // 两轮：可判定才赋值，无法判定保持/清空为空；多轴直接用后端结果
+    if (aiTruckRealLastWheel > 0 && aiTruckRealLastWheel <= 2) {
+      form.value.truckType = d.vehicle_type || ''
+    } else if (d.vehicle_type) {
+      form.value.truckType = d.vehicle_type
+    }
+    if (d.vehicle_container_type) form.value.containerType = d.vehicle_container_type
+    console.info(
+      `[AI货车识别] wheel=${d.wheel_count ?? '-'} plate=${form.value.plate || '-'} ` +
+        `color=${form.value.plateColor || '-'} truck=${d.vehicle_type || '(未判定)'} ` +
+        `crate=${d.cratetype || '-'} container=${d.vehicle_container_type || '-'}`,
+    )
+  } catch (e) {
+    if (seq !== aiTruckRealSeq) return
+    console.warn('[AI货车识别]', e instanceof Error ? e.message : e)
+  } finally {
+    if (seq === aiTruckRealSeq) aiTruckRealBusy.value = false
+  }
+}
+
+function scheduleAiTruckReal() {
+  if (aiTruckRealTimer) clearTimeout(aiTruckRealTimer)
+  aiTruckRealTimer = setTimeout(() => {
+    aiTruckRealTimer = null
+    const bodyUrl = bodyImageUrls.value.body
+    if (!bodyUrl) return
+    if (bodyUrl === aiTruckRealLastKey && form.value.truckType && form.value.containerType) {
+      return
+    }
+    void runAiTruckRealSilent(bodyUrl)
+  }, 400)
+}
+
+watch(
+  () => bodyImageUrls.value.body,
+  (url) => {
+    if (!url) {
+      aiTruckRealLastKey = ''
+      aiTruckRealLastWheel = 0
+      return
+    }
+    scheduleAiTruckReal()
+  },
+)
+
+// 两轮车：车牌号/颜色变更时按蓝牌/渐变绿重算一/二型（无法判定则不赋值）
+watch(
+  () => [form.value.plateColor, form.value.plate] as const,
+  () => {
+    applyTruckTypeFromLastWheels()
+  },
+)
+
 // ---- 车牌编辑 ----
 const licensePlateRef = ref<InstanceType<typeof LicensePlateEdit> | null>(null)
 const licensePlateGCRef = ref<InstanceType<typeof LicensePlateEdit> | null>(null)
@@ -808,6 +954,13 @@ function doReset() {
   if (aiLoadRateTimer) {
     clearTimeout(aiLoadRateTimer)
     aiLoadRateTimer = null
+  }
+  aiTruckRealLastKey = ''
+  aiTruckRealLastWheel = 0
+  aiTruckRealSeq += 1
+  if (aiTruckRealTimer) {
+    clearTimeout(aiTruckRealTimer)
+    aiTruckRealTimer = null
   }
   // 清通行码
   passcode.value = null
