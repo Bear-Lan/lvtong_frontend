@@ -3,7 +3,7 @@
  * 行驶证弹窗 — 1:1 对齐 Qt GetDrivingPicDialog.ui / .cpp
  * 尺寸 702×700；主行驶证 / 挂车证各高 260；底栏按钮区
  * 有图点击预览（对齐 openUrl）；空态 Web 可选本地图（Qt 由高拍仪写入）
- * AI检测拼接：调用后端 /api/license/ai-crop → 外部裁剪服务，双图上下拼成一张
+ * AI检测拼接：调用后端 /api/license/ai-crop → 主/挂分开展示，另保留拼接图供提交落库
  */
 import { ref, watch } from 'vue'
 import QtMessageBox from '@/components/common/QtMessageBox.vue'
@@ -12,15 +12,18 @@ import { appConfig } from '@/config/env'
 const props = defineProps<{
   licenseSrc?: string
   licenseGcSrc?: string
+  licenseStitchedSrc?: string
 }>()
 
 const emit = defineEmits<{
   close: []
-  confirm: [payload: { license: string; licenseGc: string }]
+  confirm: [payload: { license: string; licenseGc: string; licenseStitched: string }]
 }>()
 
 const license = ref(props.licenseSrc || '')
 const licenseGc = ref(props.licenseGcSrc || '')
+/** 拼接图（提交确认 / 落库）；主页分开展示仍用 license / licenseGc */
+const licenseStitched = ref(props.licenseStitchedSrc || '')
 
 const confirmMsg = ref('')
 const confirmVisible = ref(false)
@@ -30,18 +33,17 @@ const pickTarget = ref<'main' | 'gc' | null>(null)
 const fileInputRef = ref<HTMLInputElement | null>(null)
 
 const aiBusy = ref(false)
-/** 仅 AI 检测结果允许主证区域撑高；上传原图时框高固定 */
-const aiResult = ref(false)
+/** AI 裁剪后主/挂槽仍分开展示，不因拼接而撑高主证区 */
 const tipVisible = ref(false)
 const tipMessage = ref('')
 const tipOk = ref(true)
 
 watch(
-  () => [props.licenseSrc, props.licenseGcSrc],
+  () => [props.licenseSrc, props.licenseGcSrc, props.licenseStitchedSrc],
   () => {
     license.value = props.licenseSrc || ''
     licenseGc.value = props.licenseGcSrc || ''
-    aiResult.value = false
+    licenseStitched.value = props.licenseStitchedSrc || ''
   },
 )
 
@@ -98,11 +100,12 @@ function onFileChosen(e: Event) {
   if (pickTarget.value === 'main') {
     if (license.value.startsWith('blob:')) URL.revokeObjectURL(license.value)
     license.value = url
+    licenseStitched.value = ''
   } else {
     if (licenseGc.value.startsWith('blob:')) URL.revokeObjectURL(licenseGc.value)
     licenseGc.value = url
+    licenseStitched.value = ''
   }
-  aiResult.value = false
   pickTarget.value = null
 }
 
@@ -117,10 +120,11 @@ function onConfirmYes() {
   if (pendingDel === 'main') {
     if (license.value.startsWith('blob:')) URL.revokeObjectURL(license.value)
     license.value = ''
-    aiResult.value = false
+    licenseStitched.value = ''
   } else if (pendingDel === 'gc') {
     if (licenseGc.value.startsWith('blob:')) URL.revokeObjectURL(licenseGc.value)
     licenseGc.value = ''
+    licenseStitched.value = ''
   }
   pendingDel = null
 }
@@ -174,7 +178,12 @@ async function onAiCrop() {
     const json = (await res.json()) as {
       code: number
       message?: string
-      data?: { imageDataUrl?: string; mode?: string }
+      data?: {
+        imageDataUrl?: string
+        mainDataUrl?: string
+        hangDataUrl?: string
+        mode?: string
+      }
     }
     if (!res.ok || json.code !== 0 || !json.data?.imageDataUrl) {
       tipOk.value = false
@@ -186,15 +195,16 @@ async function onAiCrop() {
     if (license.value.startsWith('blob:')) URL.revokeObjectURL(license.value)
     if (licenseGc.value.startsWith('blob:')) URL.revokeObjectURL(licenseGc.value)
 
-    // 最终只保留一张：主行驶证槽位 = AI 结果；双图时挂车证已拼进结果，清空副图
-    license.value = json.data.imageDataUrl
-    if (hasGc) licenseGc.value = ''
-    aiResult.value = true
+    const d = json.data
+    // 主页/弹窗分开展示裁剪后的主、挂；拼接图单独保留供提交
+    license.value = d.mainDataUrl || d.imageDataUrl
+    licenseGc.value = d.hangDataUrl || ''
+    licenseStitched.value = d.imageDataUrl || ''
 
     tipOk.value = true
     tipMessage.value =
-      json.data.mode === 'stitch'
-        ? 'AI 检测拼接完成（主+挂车已拼成一张）'
+      d.mode === 'stitch'
+        ? 'AI 检测完成（主/挂已分开展示，提交时用拼接图）'
         : 'AI 检测完成'
     tipVisible.value = true
   } catch (e) {
@@ -211,37 +221,73 @@ async function onAiCrop() {
   }
 }
 
-/** 对齐 onClose：关窗并回写路径 */
-function onClose() {
-  emit('confirm', { license: license.value, licenseGc: licenseGc.value })
+/** 主+挂上下拼成 dataURL（未走 AI 时补拼，供提交确认展示） */
+async function stitchVerticalDataUrl(src1: string, src2: string): Promise<string> {
+  const load = (src: string) =>
+    new Promise<HTMLImageElement>((resolve, reject) => {
+      const img = new Image()
+      img.onload = () => resolve(img)
+      img.onerror = () => reject(new Error('图片加载失败'))
+      img.src = src
+    })
+  const [a, b] = await Promise.all([load(src1), load(src2)])
+  const width = Math.max(a.naturalWidth, b.naturalWidth)
+  const scaleA = width / a.naturalWidth
+  const scaleB = width / b.naturalWidth
+  const hA = Math.round(a.naturalHeight * scaleA)
+  const hB = Math.round(b.naturalHeight * scaleB)
+  const canvas = document.createElement('canvas')
+  canvas.width = width
+  canvas.height = hA + hB
+  const ctx = canvas.getContext('2d')
+  if (!ctx) return src1
+  ctx.fillStyle = '#fff'
+  ctx.fillRect(0, 0, width, canvas.height)
+  ctx.drawImage(a, 0, 0, width, hA)
+  ctx.drawImage(b, 0, hA, width, hB)
+  return canvas.toDataURL('image/jpeg', 0.92)
+}
+
+/** 对齐 onClose：关窗并回写路径（主/挂分开 + 拼接图） */
+async function onClose() {
+  let stitched = licenseStitched.value
+  try {
+    if (!stitched && license.value && licenseGc.value) {
+      stitched = await stitchVerticalDataUrl(license.value, licenseGc.value)
+      licenseStitched.value = stitched
+    } else if (!stitched) {
+      stitched = license.value || ''
+    }
+  } catch {
+    stitched = license.value || licenseGc.value || ''
+  }
+  emit('confirm', {
+    license: license.value,
+    licenseGc: licenseGc.value,
+    licenseStitched: stitched,
+  })
   emit('close')
 }
 </script>
 
 <template>
-  <div class="drv-overlay" @click.self="onClose">
+  <div class="drv-overlay" @click.self="void onClose()">
     <div class="drv-dialog" role="dialog" aria-modal="true" aria-label="行驶证" @click.stop>
       <div class="titlebar">
         <img class="title-icon" src="/assets/img/logo.ico" alt="" />
         <span class="title-text">行驶证</span>
-        <button type="button" class="btn-x" title="关闭" @click="onClose">×</button>
+        <button type="button" class="btn-x" title="关闭" @click="void onClose()">×</button>
       </div>
 
       <div class="body">
-        <div
-          class="license-group"
-          :class="{ 'license-group--tall': aiResult }"
-        >
+        <div class="license-group">
           <div class="group-title">主行驶证</div>
           <div class="license-view" @click="onAreaClick('main')">
             <img v-if="license" :src="license" alt="" />
           </div>
         </div>
 
-        <div
-          class="license-group"
-          :class="{ 'license-group--collapsed': aiResult && !licenseGc }"
-        >
+        <div class="license-group">
           <div class="group-title">挂车证</div>
           <div class="license-view" @click="onAreaClick('gc')">
             <img v-if="licenseGc" :src="licenseGc" alt="" />
@@ -255,12 +301,12 @@ function onClose() {
             type="button"
             class="btn-action btn-ai"
             :disabled="aiBusy || !license"
-            title="调用 AI 裁剪；双图则上下拼接为一张"
+            title="调用 AI 裁剪；双图保留分开展示，并生成拼接图供提交"
             @click="onAiCrop"
           >
             {{ aiBusy ? 'AI处理中…' : 'AI检测拼接' }}
           </button>
-          <button type="button" class="btn-action" @click="onClose">关闭</button>
+          <button type="button" class="btn-action" @click="void onClose()">关闭</button>
         </div>
       </div>
 

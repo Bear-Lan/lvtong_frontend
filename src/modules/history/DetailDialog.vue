@@ -401,6 +401,7 @@ function isBlank(v: unknown): boolean {
  * 可空：备注内容、查验依据、复核、证件照、满载率。
  * 交易支付方式显示「未知」也算有值。
  * 其余表单字段必填；图片（不含证件照）至少一张。
+ * 注：备注内容界面标 * 仅强调重要，业务上仍可空。
  */
 function validateSubmitConfirm(): string | null {
   const r = record.value
@@ -431,7 +432,7 @@ function validateSubmitConfirm(): string | null {
   need('应收金额', !isBlank(r.pass_code_pay_fee))
   // 交易支付方式：未知也算有值（不校验）
   need('车辆状态标识', !isBlank(r.pass_code_vehicle_sign))
-  // 备注内容 — 可空
+  // 备注内容 — 可空（界面标 * 仅强调重要）
 
   // 右列
   need('车牌号码', !isBlank(plateNumber.value) && plateNumber.value !== '--')
@@ -632,19 +633,19 @@ onMounted(async () => {
             <!-- 中列 -->
             <div class="form-col">
               <div class="field-row">
-                <label>货车类型</label>
+                <label class="label-required"><span class="req-star">*</span>货车类型</label>
                 <select v-model="truckType" class="uline-select" :disabled="readOnly">
                   <option v-for="t in truckTypes" :key="t.type_code" :value="t.type_code">{{ t.type_name }}</option>
                 </select>
               </div>
               <div class="field-row">
-                <label>货箱类型</label>
+                <label class="label-required"><span class="req-star">*</span>货箱类型</label>
                 <select v-model="containerType" class="uline-select" :disabled="readOnly">
                   <option v-for="t in containerTypes" :key="t.type_code" :value="t.type_code">{{ t.type_name }}</option>
                 </select>
               </div>
               <div class="field-row">
-                <label>货物名称</label>
+                <label class="label-required"><span class="req-star">*</span>货物名称</label>
                 <input v-model="goodsName" readonly class="with-btn" />
                 <button
                   v-if="!readOnly"
@@ -661,7 +662,10 @@ onMounted(async () => {
               <div class="field-row"><label>应收金额(元)</label><input readonly :value="record.pass_code_pay_fee || ''" /></div>
               <div class="field-row"><label>交易支付方式</label><input readonly :value="getTransPayTypeStr(record.pass_code_trans_pay_type)" /></div>
               <div class="field-row"><label>车辆状态标识</label><input readonly :value="getVehicleSignStr(record.pass_code_vehicle_sign)" /></div>
-              <div class="field-row"><label>备注内容</label><input v-model="remark" :readonly="readOnly" /></div>
+              <div class="field-row">
+                <label class="label-required"><span class="req-star">*</span>备注内容</label>
+                <input v-model="remark" :readonly="readOnly" />
+              </div>
             </div>
 
             <!-- 右列 -->
@@ -712,7 +716,7 @@ onMounted(async () => {
                 />
               </div>
               <div class="field-row">
-                <label>司机电话</label>
+                <label class="label-required"><span class="req-star">*</span>司机电话</label>
                 <input
                   v-model="driverPhone"
                   maxlength="11"
@@ -1160,6 +1164,17 @@ onMounted(async () => {
     text-align: left;
     white-space: nowrap;
     padding: 4px 2px;
+  }
+
+  .label-required {
+    color: #000;
+    font-weight: 700;
+  }
+
+  .req-star {
+    color: #e74c3c;
+    font-weight: 700;
+    margin-right: 2px;
   }
 
   input,

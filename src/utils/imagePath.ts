@@ -106,6 +106,23 @@ export function joinImagePaths(references: (string | undefined | null)[]): strin
     .join('|')
 }
 
+/**
+ * 由落库的行驶证拼接图路径推导旁路文件 URL。
+ * 例：/api/images/.../xxx.jpg → /api/images/.../xxx-main.jpg
+ */
+export function licenseSiblingApiUrl(
+  stitchedRef: string | undefined | null,
+  kind: 'main' | 'hang',
+): string {
+  const url = toApiUrl(stitchedRef)
+  if (!url || !url.startsWith('/api/images/')) return ''
+  const q = url.indexOf('?')
+  const bare = q >= 0 ? url.slice(0, q) : url
+  const dot = bare.lastIndexOf('.')
+  if (dot <= 0) return `${bare}-${kind}`
+  return `${bare.slice(0, dot)}-${kind}${bare.slice(dot)}`
+}
+
 // ---- 内部工具 ----
 
 /** 判定字符串"形似磁盘绝对路径"。

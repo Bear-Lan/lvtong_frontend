@@ -31,7 +31,7 @@ import DrivingLicenseDialog from '@/components/capture/DrivingLicenseDialog.vue'
 import { useBookingStore } from '@/modules/booking'
 import type { BookingAcceptPayload, BookingComingPayload } from '@/modules/booking'
 import { useRouter } from 'vue-router'
-import { toApiUrl, toStoragePath, joinImagePaths } from '@/utils/imagePath'
+import { toApiUrl, toStoragePath, joinImagePaths, licenseSiblingApiUrl } from '@/utils/imagePath'
 import { processImage } from '@/utils/imageProcess'
 import { useWhepPlayer } from '@/composables/useWhepPlayer'
 import { DEFAULT_WHEP_URL } from '@/config/liveVideo'
@@ -655,13 +655,18 @@ async function applyPlateHistory(plate: string) {
         ? d.vehicle_size
         : formatVehicleSizeDisplay(d.vehicle_size)
     }
-    // 行驶证照片 → 弹窗路径 + 主页缩略图
+    // 行驶证照片 → 弹窗路径 + 主页缩略图（库仅拼接图；主/挂按 -main/-hang 旁路）
     if (d.license_image_path || d.license_image_path1) {
-      const lic = d.license_image_path ? toImageUrl(d.license_image_path) : ''
-      const licGc = d.license_image_path1 ? toImageUrl(d.license_image_path1) : ''
+      const stitched = d.license_image_path ? toImageUrl(d.license_image_path) : ''
+      const lic =
+        licenseSiblingApiUrl(d.license_image_path, 'main') || stitched
+      const licGc =
+        licenseSiblingApiUrl(d.license_image_path, 'hang') ||
+        (d.license_image_path1 ? toImageUrl(d.license_image_path1) : '')
       licensePaths.value = {
         license: lic || licensePaths.value.license,
         licenseGc: licGc || licensePaths.value.licenseGc,
+        licenseStitched: stitched || licensePaths.value.licenseStitched,
       }
       captureThumbs.value.license =
         licensePaths.value.license || licensePaths.value.licenseGc || ''
@@ -801,7 +806,7 @@ const captureLists = ref<{ goods: string[]; evidence: string[] }>({
   goods: [],
   evidence: [],
 })
-const licensePaths = ref({ license: '', licenseGc: '' })
+const licensePaths = ref({ license: '', licenseGc: '', licenseStitched: '' })
 
 /** 通行码 14 字段（对齐 Qt PassCodeUtil::GetPassCodeInfoByCodeStr） */
 const passcode = ref<{
@@ -856,9 +861,17 @@ function onCaptureConfirm(kind: CaptureKind, images: string[]) {
   }
 }
 
-function onLicenseConfirm(payload: { license: string; licenseGc: string }) {
-  licensePaths.value = payload
-  // 对齐合并后显示到 btn_license：优先主证
+function onLicenseConfirm(payload: {
+  license: string
+  licenseGc: string
+  licenseStitched: string
+}) {
+  licensePaths.value = {
+    license: payload.license || '',
+    licenseGc: payload.licenseGc || '',
+    licenseStitched: payload.licenseStitched || '',
+  }
+  // 主页缩略：有双图时优先主证（格子内分开展示）
   captureThumbs.value.license = payload.license || payload.licenseGc || ''
 }
 
@@ -944,7 +957,7 @@ function doReset() {
   // 清图片（对齐 Qt clearFormData 清除所有图片缩略图）
   captureThumbs.value = {}
   captureLists.value = { goods: [], evidence: [] }
-  licensePaths.value = { license: '', licenseGc: '' }
+  licensePaths.value = { license: '', licenseGc: '', licenseStitched: '' }
   bodyImageUrls.value = { body: '', top: '', side: '' }
   xrayImageUrls.value = { '200': '', '160': '', mosaic: '' }
   liveCropPreviewUrl.value = ''
@@ -1031,7 +1044,12 @@ function buildSubmitPreview(): InspectionDetail {
     goods_image_path: goodsJoined || undefined,
     evidences_image_path: evidenceJoined || undefined,
     license_image_path:
-      toApiUrl(licensePaths.value.license || captureThumbs.value.license || '') || undefined,
+      toApiUrl(
+        licensePaths.value.licenseStitched ||
+          (!licensePaths.value.licenseGc ? licensePaths.value.license : '') ||
+          captureThumbs.value.license ||
+          '',
+      ) || undefined,
     pass_code_image_path: toApiUrl(captureThumbs.value.passcode || '') || undefined,
     operator_name: auth.user?.realName || '',
     inspector_phone: auth.user?.phone || '',
@@ -1122,9 +1140,11 @@ async function onSubmitConfirmYes(payload?: {
     // 货物图 / 证据照（多张统一 | 分隔）
     goods_image_path: joinImagePaths(captureLists.value.goods || []),
     evidences_image_path: joinImagePaths(captureLists.value.evidence || []),
-    // 行驶证（合并图 + GC 牌）
-    license_image_path: toStoragePath(licensePaths.value.license || ''),
-    license_image_path1: toStoragePath(licensePaths.value.licenseGc || ''),
+    // 行驶证：落库用拼接图；主/挂旁路落盘（-main / -hang）
+    license_image_path: toStoragePath(licensePaths.value.licenseStitched || ''),
+    license_image_main: toStoragePath(licensePaths.value.license || ''),
+    license_image_hang: toStoragePath(licensePaths.value.licenseGc || ''),
+    license_image_path1: '',
     // 查验/班组用登录用户；复核人暂时留空
     operator_name: auth.user?.realName || '',
     inspector_phone: payload?.inspector_phone || auth.user?.phone || '',
@@ -1399,6 +1419,8 @@ function setupWS() {
     if (data.license_image_path2) licensePaths.value.licenseGc = toImageUrl(data.license_image_path2)
     // 主页缩略图读的是 captureThumbs.license；原先只写了 licensePaths，要点开行驶证弹窗确认后才有图
     if (data.license_image_path1 || data.license_image_path2) {
+      // 移动上传通常是分开的两张；拼接图提交时由后端补拼
+      licensePaths.value.licenseStitched = ''
       captureThumbs.value.license =
         licensePaths.value.license || licensePaths.value.licenseGc || ''
     }
@@ -1772,12 +1794,31 @@ const anyDialogOpen = computed(
               :key="btn.key"
               type="button"
               class="capture-btn"
-              :class="{ 'has-thumb': !!captureThumbs[btn.key] }"
+              :class="{
+                'has-thumb':
+                  btn.key === 'license'
+                    ? !!(licensePaths.license || licensePaths.licenseGc)
+                    : !!captureThumbs[btn.key],
+                'license-split':
+                  btn.key === 'license' && !!(licensePaths.license || licensePaths.licenseGc),
+              }"
               :title="btn.label"
               @click="onCaptureClick(btn.key)"
             >
+              <template v-if="btn.key === 'license' && (licensePaths.license || licensePaths.licenseGc)">
+                <div class="license-split-inner">
+                  <div class="license-half">
+                    <img v-if="licensePaths.license" :src="licensePaths.license" alt="主行驶证" />
+                    <span v-else class="license-half-empty">主</span>
+                  </div>
+                  <div class="license-half">
+                    <img v-if="licensePaths.licenseGc" :src="licensePaths.licenseGc" alt="挂车证" />
+                    <span v-else class="license-half-empty">挂</span>
+                  </div>
+                </div>
+              </template>
               <img
-                v-if="captureThumbs[btn.key]"
+                v-else-if="captureThumbs[btn.key]"
                 :src="captureThumbs[btn.key]"
                 :alt="btn.label"
                 class="capture-thumb"
@@ -1812,10 +1853,10 @@ const anyDialogOpen = computed(
             </div>
 
             <div class="form-row">
-              <label>司机电话：</label>
+              <label class="label-required"><span class="req-star">*</span>司机电话：</label>
               <input v-model="form.phone" class="field-input" placeholder="请输入11位手机号" />
               <span class="col-gap" />
-              <label class="col-right">货车类型：</label>
+              <label class="col-right label-required"><span class="req-star">*</span>货车类型：</label>
               <select v-model="form.truckType" class="field-input">
                 <option value="">请选择</option>
                 <option v-for="t in truckTypeOptions" :key="t.type_code" :value="t.type_code">
@@ -1825,12 +1866,12 @@ const anyDialogOpen = computed(
             </div>
 
             <div class="form-row">
-              <label>货物类型：</label>
+              <label class="label-required"><span class="req-star">*</span>货物名称：</label>
               <input v-model="form.goods" class="field-input" placeholder="请选择农产品类型" readonly />
               <button class="icon-btn" title="货物类型选择" @click="onSelectProduct">
                 <img src="/assets/img/a_search.png" alt="" />
               </button>
-              <label class="col-right">货箱类型：</label>
+              <label class="col-right label-required"><span class="req-star">*</span>货箱类型：</label>
               <select v-model="form.containerType" class="field-input">
                 <option value="">请选择</option>
                 <option v-for="c in containerTypeOptions" :key="c.type_code" :value="c.type_code">
@@ -1932,6 +1973,7 @@ const anyDialogOpen = computed(
       v-if="showLicenseDialog"
       :license-src="licensePaths.license"
       :license-gc-src="licensePaths.licenseGc"
+      :license-stitched-src="licensePaths.licenseStitched"
       @confirm="onLicenseConfirm"
       @close="showLicenseDialog = false"
     />
@@ -2413,6 +2455,40 @@ const anyDialogOpen = computed(
   background: #1a1a1a;
 }
 
+.capture-btn.license-split {
+  padding: 0;
+}
+
+.license-split-inner {
+  display: flex;
+  width: 100%;
+  height: 100%;
+  gap: 2px;
+  background: #1a1a1a;
+}
+
+.license-half {
+  flex: 1;
+  min-width: 0;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+
+  img {
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+    display: block;
+  }
+}
+
+.license-half-empty {
+  font-size: 12px;
+  color: #888;
+}
+
 .form-header { padding-left: 20px; }
 
 .form-body {
@@ -2434,6 +2510,17 @@ const anyDialogOpen = computed(
   label { color: #444; text-align: right; white-space: nowrap; }
   .col-right { grid-column: 4; }
   .col-gap { grid-column: 3; }
+
+  .label-required {
+    color: #000;
+    font-weight: 700;
+  }
+
+  .req-star {
+    color: #e74c3c;
+    font-weight: 700;
+    margin-right: 2px;
+  }
 }
 
 .field-input {
