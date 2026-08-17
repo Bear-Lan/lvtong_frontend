@@ -7,6 +7,8 @@ import { useBookingStore } from '../store/useBookingStore'
 import type { BookingAcceptPayload, BookingConfirmConfig, VehicleSizeType } from '../types'
 import {
   calcCarHeadLength,
+  defaultLinePositionAfterOrigin,
+  envelopeFirstNumber,
   parseImageEnvelope,
   toggleVehicleHeight,
   vehicleTypeFromRadarHeight,
@@ -66,17 +68,18 @@ export function useBookingDialog() {
 
   function updateCarHeadLength() {
     if (originalImageWidth.value <= 0) {
-      // 无图时保持默认车头长，仍可手动改线位置后按默认宽兜底
-      carHeadLength.value = Math.max(carHeadLength.value, DEFAULT_HEAD_WIDTH)
+      // 无原图宽度时无法按像素换算，只能保持默认
+      carHeadLength.value = DEFAULT_HEAD_WIDTH
       return
     }
-    carHeadLength.value = calcCarHeadLength(
+    const next = calcCarHeadLength(
       linePosition.value,
       originalImageWidth.value,
       imageEnvelope.value,
       vehicleHeaderEnvelope.value,
       DEFAULT_HEAD_WIDTH,
     )
+    carHeadLength.value = next
   }
 
   watch(linePosition, updateCarHeadLength)
@@ -88,6 +91,7 @@ export function useBookingDialog() {
       const data = await api.fetchRadarImage()
       if (!data) {
         radarImageUrl.value = null
+        originalImageWidth.value = 0
         return
       }
 
@@ -99,14 +103,34 @@ export function useBookingDialog() {
         vehicleHeight.value = data.vehicleHeight
       }
 
-      const pos = parseImageEnvelope(data.imageEnvelope, data.originalImageWidth)
-      if (pos != null) {
-        linePosition.value = pos
+      console.info(
+        '[Booking] radar meta',
+        `w=${originalImageWidth.value}`,
+        `env=${imageEnvelope.value || '-'}`,
+        `hdr=${vehicleHeaderEnvelope.value || '-'}`,
+        `originX=${data.contentOriginX ?? '-'}`,
+      )
+
+      const width = data.originalImageWidth || 0
+      // 优先中间层 Image-Envelope；否则：有颜色起点 + 默认车头长 1.5m
+      const fromEnvelope = parseImageEnvelope(data.imageEnvelope, width)
+      if (fromEnvelope != null) {
+        linePosition.value = fromEnvelope
+      } else {
+        const originPx =
+          typeof data.contentOriginX === 'number' && data.contentOriginX > 0
+            ? data.contentOriginX
+            : envelopeFirstNumber(data.vehicleHeaderEnvelope || '')
+        const fromOrigin = defaultLinePositionAfterOrigin(originPx, width, DEFAULT_HEAD_WIDTH)
+        if (fromOrigin != null) {
+          linePosition.value = fromOrigin
+        }
       }
       updateCarHeadLength()
     } catch (e) {
       errorMessage.value = e instanceof Error ? e.message : '雷达图获取失败'
       radarImageUrl.value = null
+      originalImageWidth.value = 0
     } finally {
       loading.value = false
     }
@@ -161,6 +185,7 @@ export function useBookingDialog() {
       carHeadLength: carHeadLength.value,
       xrayEnabled: xrayEnabled.value,
       linePosition: linePosition.value,
+      radarHeadImageUrl: radarImageUrl.value || undefined,
     }
   }
 

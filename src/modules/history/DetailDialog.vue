@@ -244,6 +244,9 @@ const galleryItems = computed((): GalleryItem[] => {
   splitImagePaths(r.evidences_image_path).forEach((p, i) => push(`证据照${i + 1}`, p))
   push('透视图像', r.transparent_image_path)
   push('车身图像', r.body_image_path)
+  push('车侧雷达图', r.radar_side_image_path)
+  push('车顶雷达图', r.radar_top_image_path)
+  push('车头雷达图', r.radar_head_image_path)
   splitImagePaths(r.goods_image_path).forEach((p, i) => push(`货物照片${i + 1}`, p))
   push('通行码', r.pass_code_image_path)
   return items

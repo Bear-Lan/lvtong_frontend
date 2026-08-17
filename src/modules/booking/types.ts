@@ -19,6 +19,8 @@ export interface RadarImageResponse {
   vehicleHeight: number
   originalImageWidth: number
   originalImageHeight: number
+  /** 无包络时后端推算的内容最左列（像素） */
+  contentOriginX?: number
 }
 
 /**
@@ -36,6 +38,8 @@ export interface BookingAcceptPayload {
   linePosition: number
   /** 受理时间 ISO，对齐 acceptanceTime */
   acceptanceTime?: string
+  /** 预约界面车头雷达图（临时 URL / dataUrl），提交时落库 radar_head_image_path */
+  radarHeadImageUrl?: string
 }
 
 /**

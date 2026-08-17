@@ -26,6 +26,8 @@ export const useBookingStore = defineStore('booking', () => {
   const bookingDialogShown = ref(false)
   /** SP 视频流预留 */
   const videoStreamUrl = ref<string | null>(null)
+  /** 预约车头雷达图（受理时带入，提交写 radar_head_image_path） */
+  const radarHeadImageUrl = ref('')
 
   // ---- 时间字段（对齐 Qt m_VehicleInspection.* 命名，权威源 = 后端 _booking_state） ----
   /** 司机按键预约时间（来自后端栈） */
@@ -64,6 +66,9 @@ export const useBookingStore = defineStore('booking', () => {
     carHeight.value = payload.vehicleHeight
     carLength.value = payload.carHeadLength
     isCheckXRay.value = payload.xrayEnabled
+    if (payload.radarHeadImageUrl) {
+      radarHeadImageUrl.value = payload.radarHeadImageUrl
+    }
     isDetection.value = true
     checkStep.value = 1
     dialogVisible.value = false
@@ -74,6 +79,7 @@ export const useBookingStore = defineStore('booking', () => {
     isDetection.value = false
     checkStep.value = 0
     dialogVisible.value = false
+    radarHeadImageUrl.value = ''
   }
 
   function setVideoStreamUrl(url: string | null) {
@@ -124,6 +130,7 @@ export const useBookingStore = defineStore('booking', () => {
     isCheckXRay.value = true
     bookingDialogShown.value = false
     videoStreamUrl.value = null
+    radarHeadImageUrl.value = ''
     // 时间字段也清空
     btnPrebookTime.value = ''
     acceptanceTime.value = ''
@@ -142,6 +149,7 @@ export const useBookingStore = defineStore('booking', () => {
     isCheckXRay,
     bookingDialogShown,
     videoStreamUrl,
+    radarHeadImageUrl,
     btnPrebookTime,
     acceptanceTime,
     opengateTime,

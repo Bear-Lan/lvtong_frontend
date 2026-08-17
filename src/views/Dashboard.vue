@@ -1039,6 +1039,9 @@ function buildSubmitPreview(): InspectionDetail {
     tail_image_path: toApiUrl(captureThumbs.value.tail || '') || undefined,
     top_image_path: toApiUrl(resolveTopImageRef()) || undefined,
     body_image_path: toApiUrl(bodyImageUrls.value.body || '') || undefined,
+    radar_side_image_path: toApiUrl(bodyImageUrls.value.side || '') || undefined,
+    radar_top_image_path: toApiUrl(bodyImageUrls.value.top || '') || undefined,
+    radar_head_image_path: toApiUrl(bookingStore.radarHeadImageUrl || '') || undefined,
     transparent_image_path:
       toApiUrl(xrayDisplayUrl.value || xrayImageUrls.value['200'] || '') || undefined,
     goods_image_path: goodsJoined || undefined,
@@ -1134,6 +1137,10 @@ async function onSubmitConfirmYes(payload?: {
     body_image_path: toStoragePath(bodyImageUrls.value.body || ''),
     // 车顶：图像采集区域（与预览一致），不用车身影像雷达测顶
     top_image_path: toStoragePath(resolveTopImageRef()),
+    // 雷达三图：车侧/车顶来自车身影像；车头来自预约受理图
+    radar_side_image_path: toStoragePath(bodyImageUrls.value.side || ''),
+    radar_top_image_path: toStoragePath(bodyImageUrls.value.top || ''),
+    radar_head_image_path: toStoragePath(bookingStore.radarHeadImageUrl || ''),
     transparent_image_path: toStoragePath(xrayImageUrls.value['200'] || ''),
     // 通行码 QR 图（对齐 Qt m_codeImagePath，flask 后端生成）
     passcode_image_path: toStoragePath(captureThumbs.value.passcode || ''),
@@ -1293,6 +1300,7 @@ function setupWS() {
         carHeadLength: data.carHeadLength,
         xrayEnabled: data.xrayEnabled,
         linePosition: data.linePosition ?? 0.5,
+        radarHeadImageUrl: data.radarHeadImageUrl,
       })
       workflow.value.bookingActive = true
     }
