@@ -569,6 +569,116 @@ watch(
   },
 )
 
+/** AI 行驶证裁剪（静默）：主行驶证到位后自动调用；可带挂车证一起裁 */
+const aiLicenseCropBusy = ref(false)
+let aiLicenseCropSeq = 0
+let aiLicenseCropLastKey = ''
+let aiLicenseCropTimer: ReturnType<typeof setTimeout> | null = null
+
+async function srcToFileForAi(src: string, filename: string): Promise<File> {
+  const res = await fetch(src)
+  if (!res.ok) throw new Error(`读取图片失败: ${res.status}`)
+  const blob = await res.blob()
+  return new File([blob], filename, { type: blob.type || 'image/jpeg' })
+}
+
+async function runAiLicenseCropSilent(mainSrc: string, hangSrc: string) {
+  const key = `${mainSrc}||${hangSrc}`
+  if (aiLicenseCropBusy.value && aiLicenseCropLastKey === key) return
+  aiLicenseCropLastKey = key
+  const seq = ++aiLicenseCropSeq
+  aiLicenseCropBusy.value = true
+  try {
+    const fd = new FormData()
+    fd.append('crop_image1', await srcToFileForAi(mainSrc, 'crop_image1.jpg'))
+    if (hangSrc) {
+      fd.append('crop_image2', await srcToFileForAi(hangSrc, 'crop_image2.jpg'))
+    }
+    const token =
+      localStorage.getItem('lvtong_token') || sessionStorage.getItem('lvtong_token')
+    const headers: Record<string, string> = {}
+    if (token) headers.Authorization = `Bearer ${token}`
+
+    const controller = new AbortController()
+    const timer = setTimeout(() => controller.abort(), 120000)
+    let res: Response
+    try {
+      res = await fetch(`${appConfig.apiBaseUrl}/license/ai-crop`, {
+        method: 'POST',
+        headers,
+        body: fd,
+        signal: controller.signal,
+      })
+    } finally {
+      clearTimeout(timer)
+    }
+
+    const json = (await res.json()) as {
+      code: number
+      message?: string
+      data?: {
+        imageDataUrl?: string
+        mainDataUrl?: string
+        hangDataUrl?: string
+        mode?: string
+      }
+    }
+    if (seq !== aiLicenseCropSeq) return
+    if (!res.ok || json.code !== 0 || !json.data?.imageDataUrl) {
+      throw new Error(json.message || `AI 裁剪失败（HTTP ${res.status}）`)
+    }
+
+    const d = json.data
+    licensePaths.value = {
+      license: d.mainDataUrl || d.imageDataUrl || mainSrc,
+      licenseGc: d.hangDataUrl || hangSrc || '',
+      licenseStitched: d.imageDataUrl || '',
+    }
+    captureThumbs.value.license =
+      licensePaths.value.license || licensePaths.value.licenseGc || ''
+    // 防止 watch 因路径更新再次触发
+    aiLicenseCropLastKey = `${licensePaths.value.license}||${licensePaths.value.licenseGc}`
+    console.info('[AI行驶证裁剪] 静默完成', d.mode || '')
+  } catch (e) {
+    if (seq !== aiLicenseCropSeq) return
+    console.warn('[AI行驶证裁剪]', e instanceof Error ? e.message : e)
+  } finally {
+    if (seq === aiLicenseCropSeq) aiLicenseCropBusy.value = false
+  }
+}
+
+function scheduleAiLicenseCrop() {
+  if (aiLicenseCropTimer) clearTimeout(aiLicenseCropTimer)
+  // 稍等挂车证可能随后到达（移动端常分两次上传）
+  aiLicenseCropTimer = setTimeout(() => {
+    aiLicenseCropTimer = null
+    const main = licensePaths.value.license
+    const hang = licensePaths.value.licenseGc || ''
+    if (!main) return
+    const key = `${main}||${hang}`
+    // 已有拼接且已处理过同源：跳过（历史回填 / 刚裁完）
+    if (licensePaths.value.licenseStitched) {
+      if (!aiLicenseCropLastKey || key === aiLicenseCropLastKey) {
+        aiLicenseCropLastKey = key
+        return
+      }
+    }
+    if (key === aiLicenseCropLastKey) return
+    void runAiLicenseCropSilent(main, hang)
+  }, 800)
+}
+
+watch(
+  () => [licensePaths.value.license, licensePaths.value.licenseGc] as const,
+  ([main]) => {
+    if (!main) {
+      aiLicenseCropLastKey = ''
+      return
+    }
+    scheduleAiLicenseCrop()
+  },
+)
+
 // ---- 车牌编辑 ----
 const licensePlateRef = ref<InstanceType<typeof LicensePlateEdit> | null>(null)
 const licensePlateGCRef = ref<InstanceType<typeof LicensePlateEdit> | null>(null)
@@ -974,6 +1084,12 @@ function doReset() {
   if (aiTruckRealTimer) {
     clearTimeout(aiTruckRealTimer)
     aiTruckRealTimer = null
+  }
+  aiLicenseCropLastKey = ''
+  aiLicenseCropSeq += 1
+  if (aiLicenseCropTimer) {
+    clearTimeout(aiLicenseCropTimer)
+    aiLicenseCropTimer = null
   }
   // 清通行码
   passcode.value = null
