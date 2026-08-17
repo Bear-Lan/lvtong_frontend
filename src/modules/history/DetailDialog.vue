@@ -9,6 +9,8 @@ import { computed, onMounted, ref, watch } from 'vue'
 import AgriculturalSelect from '@/components/AgriculturalSelect.vue'
 import LicensePlateEdit from '@/components/LicensePlateEdit.vue'
 import QtMessageBox from '@/components/common/QtMessageBox.vue'
+import ImageGalleryDialog from '@/components/common/ImageGalleryDialog.vue'
+import type { GalleryItem } from '@/components/common/ImageGalleryDialog.vue'
 import {
   fetchContainerTypes,
   fetchInspectionDetail,
@@ -36,6 +38,7 @@ import {
   parseVehicleSizeToMm,
   splitImagePaths,
 } from './utils/passCodeDisplay'
+import { toApiUrl } from '@/utils/imagePath'
 
 const props = withDefaults(
   defineProps<{
@@ -223,6 +226,54 @@ const passCodeSrc = computed(() => {
 function imgSrc(path?: string | null, fallback: string = IMAGE_PLACEHOLDER.default) {
   if (isBrowsableImageUrl(path)) return path!
   return fallback
+}
+
+/** 当前记录全部真实图（占位不算）— 供双击大图列表 */
+const galleryItems = computed((): GalleryItem[] => {
+  const r = record.value
+  if (!r) return []
+  const items: GalleryItem[] = []
+  const push = (label: string, path?: string | null) => {
+    const src = normalizeGallerySrc(path)
+    if (src) items.push({ label, src })
+  }
+  push('车头', r.head_image_path)
+  push('车尾', r.tail_image_path)
+  push('车顶', r.top_image_path)
+  push('行驶证', r.license_image_path)
+  splitImagePaths(r.evidences_image_path).forEach((p, i) => push(`证据照${i + 1}`, p))
+  push('透视图像', r.transparent_image_path)
+  push('车身图像', r.body_image_path)
+  splitImagePaths(r.goods_image_path).forEach((p, i) => push(`货物照片${i + 1}`, p))
+  push('通行码', r.pass_code_image_path)
+  return items
+})
+
+const galleryVisible = ref(false)
+const galleryStartIndex = ref(0)
+
+/** 归一成可展示 URL；绝对磁盘路径也转成可访问地址 */
+function normalizeGallerySrc(path?: string | null): string {
+  if (!path || !String(path).trim()) return ''
+  const p = String(path).trim()
+  if (p.startsWith('/assets/')) return ''
+  if (isBrowsableImageUrl(p)) return p
+  const api = toApiUrl(p)
+  return api && api !== p ? api : api || ''
+}
+
+function openGalleryAt(path?: string | null) {
+  const list = galleryItems.value
+  if (!list.length) {
+    tipOk.value = false
+    tipMessage.value = '当前没有可查看的图片'
+    tipVisible.value = true
+    return
+  }
+  const src = normalizeGallerySrc(path)
+  const idx = src ? list.findIndex((it) => it.src === src) : -1
+  galleryStartIndex.value = idx >= 0 ? idx : 0
+  galleryVisible.value = true
 }
 
 function userLabel(u: UserOption) {
@@ -555,13 +606,18 @@ onMounted(async () => {
         <div class="photos-top">
           <div class="section-title">详情照片</div>
           <div class="photo-row-5">
-            <div v-for="p in topPhotos" :key="p.key" class="photo-col">
+            <div
+              v-for="p in topPhotos"
+              :key="p.key"
+              class="photo-col"
+              title="双击查看大图"
+            >
               <div class="photo-caption">{{ p.label }}</div>
-              <div class="photo-img-box">
+              <div class="photo-img-box" @dblclick.stop.prevent="openGalleryAt(p.path)">
                 <img :src="imgSrc(p.path, IMAGE_PLACEHOLDER.default)" :alt="p.label" />
               </div>
             </div>
-            <div class="photo-col">
+            <div class="photo-col" title="双击查看大图">
               <div class="photo-caption">证据照</div>
               <div class="photo-img-box evidence-wrap">
                 <div class="evidence-grid" :style="evidenceGridStyle">
@@ -570,6 +626,7 @@ onMounted(async () => {
                     :key="idx"
                     class="thumb-cell"
                     :class="path ? goodsBorderClass(idx) : ''"
+                    @dblclick.stop.prevent="openGalleryAt(path)"
                   >
                     <img :src="imgSrc(path, IMAGE_PLACEHOLDER.default)" alt="证据照" />
                   </div>
@@ -581,19 +638,25 @@ onMounted(async () => {
 
         <!-- 透视/车身/货物：单一大边框 + 内部竖线分隔 -->
         <div class="photos-mid">
-          <div class="mid-cell">
+          <div class="mid-cell" title="双击查看大图">
             <div class="section-title">透视图像</div>
-            <div class="wide-photo">
+            <div
+              class="wide-photo"
+              @dblclick.stop.prevent="openGalleryAt(record.transparent_image_path)"
+            >
               <img :src="transparentSrc" alt="透视图像" />
             </div>
           </div>
-          <div class="mid-cell">
+          <div class="mid-cell" title="双击查看大图">
             <div class="section-title">车身图像</div>
-            <div class="wide-photo">
+            <div
+              class="wide-photo"
+              @dblclick.stop.prevent="openGalleryAt(record.body_image_path)"
+            >
               <img :src="bodySrc" alt="车身图像" />
             </div>
           </div>
-          <div class="mid-cell">
+          <div class="mid-cell" title="双击查看大图">
             <div class="section-title">货物照片</div>
             <div class="goods-grid" :style="goodsGridStyle">
               <div
@@ -601,6 +664,7 @@ onMounted(async () => {
                 :key="idx"
                 class="thumb-cell"
                 :class="goodsBorderClass(idx)"
+                @dblclick.stop.prevent="openGalleryAt(path)"
               >
                 <img :src="imgSrc(path, IMAGE_PLACEHOLDER.good)" alt="货物照片" />
               </div>
@@ -623,7 +687,11 @@ onMounted(async () => {
               <div class="field-row"><label>通行标识ID</label><input readonly :value="record.pass_code_pass_id || ''" /></div>
               <div class="field-row passcode-row">
                 <label>通行码</label>
-                <div class="passcode-box">
+                <div
+                  class="passcode-box"
+                  title="双击查看大图"
+                  @dblclick.stop.prevent="openGalleryAt(record.pass_code_image_path)"
+                >
                   <img v-if="passCodeSrc" :src="passCodeSrc" alt="通行码" />
                   <span v-else>通行码</span>
                 </div>
@@ -833,6 +901,13 @@ onMounted(async () => {
       @yes="tipVisible = false"
       @close="tipVisible = false"
     />
+
+    <ImageGalleryDialog
+      v-if="galleryVisible"
+      :items="galleryItems"
+      :start-index="galleryStartIndex"
+      @close="galleryVisible = false"
+    />
   </div>
 </template>
 <style scoped lang="scss">
@@ -981,6 +1056,8 @@ onMounted(async () => {
   align-items: center;
   justify-content: center;
   overflow: hidden;
+  cursor: zoom-in;
+  user-select: none;
 
   img {
     width: 100%;
@@ -1062,6 +1139,8 @@ onMounted(async () => {
   align-items: center;
   justify-content: center;
   overflow: hidden;
+  cursor: zoom-in;
+  user-select: none;
 
   img {
     width: 100%;
@@ -1098,6 +1177,8 @@ onMounted(async () => {
   min-height: 0;
   background: #fff;
   box-sizing: border-box;
+  cursor: zoom-in;
+  user-select: none;
 
   &.border-blue {
     border: 2px solid #1e6fff;
