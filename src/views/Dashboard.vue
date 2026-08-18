@@ -31,7 +31,7 @@ import DrivingLicenseDialog from '@/components/capture/DrivingLicenseDialog.vue'
 import { useBookingStore } from '@/modules/booking'
 import type { BookingAcceptPayload, BookingComingPayload } from '@/modules/booking'
 import { useRouter } from 'vue-router'
-import { toApiUrl, toStoragePath, joinImagePaths, licenseSiblingApiUrl } from '@/utils/imagePath'
+import { toApiUrl, toStoragePath, joinImagePaths } from '@/utils/imagePath'
 import { processImage } from '@/utils/imageProcess'
 import { useWhepPlayer } from '@/composables/useWhepPlayer'
 import { DEFAULT_WHEP_URL } from '@/config/liveVideo'
@@ -569,116 +569,6 @@ watch(
   },
 )
 
-/** AI 行驶证裁剪（静默）：主行驶证到位后自动调用；可带挂车证一起裁 */
-const aiLicenseCropBusy = ref(false)
-let aiLicenseCropSeq = 0
-let aiLicenseCropLastKey = ''
-let aiLicenseCropTimer: ReturnType<typeof setTimeout> | null = null
-
-async function srcToFileForAi(src: string, filename: string): Promise<File> {
-  const res = await fetch(src)
-  if (!res.ok) throw new Error(`读取图片失败: ${res.status}`)
-  const blob = await res.blob()
-  return new File([blob], filename, { type: blob.type || 'image/jpeg' })
-}
-
-async function runAiLicenseCropSilent(mainSrc: string, hangSrc: string) {
-  const key = `${mainSrc}||${hangSrc}`
-  if (aiLicenseCropBusy.value && aiLicenseCropLastKey === key) return
-  aiLicenseCropLastKey = key
-  const seq = ++aiLicenseCropSeq
-  aiLicenseCropBusy.value = true
-  try {
-    const fd = new FormData()
-    fd.append('crop_image1', await srcToFileForAi(mainSrc, 'crop_image1.jpg'))
-    if (hangSrc) {
-      fd.append('crop_image2', await srcToFileForAi(hangSrc, 'crop_image2.jpg'))
-    }
-    const token =
-      localStorage.getItem('lvtong_token') || sessionStorage.getItem('lvtong_token')
-    const headers: Record<string, string> = {}
-    if (token) headers.Authorization = `Bearer ${token}`
-
-    const controller = new AbortController()
-    const timer = setTimeout(() => controller.abort(), 120000)
-    let res: Response
-    try {
-      res = await fetch(`${appConfig.apiBaseUrl}/license/ai-crop`, {
-        method: 'POST',
-        headers,
-        body: fd,
-        signal: controller.signal,
-      })
-    } finally {
-      clearTimeout(timer)
-    }
-
-    const json = (await res.json()) as {
-      code: number
-      message?: string
-      data?: {
-        imageDataUrl?: string
-        mainDataUrl?: string
-        hangDataUrl?: string
-        mode?: string
-      }
-    }
-    if (seq !== aiLicenseCropSeq) return
-    if (!res.ok || json.code !== 0 || !json.data?.imageDataUrl) {
-      throw new Error(json.message || `AI 裁剪失败（HTTP ${res.status}）`)
-    }
-
-    const d = json.data
-    licensePaths.value = {
-      license: d.mainDataUrl || d.imageDataUrl || mainSrc,
-      licenseGc: d.hangDataUrl || hangSrc || '',
-      licenseStitched: d.imageDataUrl || '',
-    }
-    captureThumbs.value.license =
-      licensePaths.value.license || licensePaths.value.licenseGc || ''
-    // 防止 watch 因路径更新再次触发
-    aiLicenseCropLastKey = `${licensePaths.value.license}||${licensePaths.value.licenseGc}`
-    console.info('[AI行驶证裁剪] 静默完成', d.mode || '')
-  } catch (e) {
-    if (seq !== aiLicenseCropSeq) return
-    console.warn('[AI行驶证裁剪]', e instanceof Error ? e.message : e)
-  } finally {
-    if (seq === aiLicenseCropSeq) aiLicenseCropBusy.value = false
-  }
-}
-
-function scheduleAiLicenseCrop() {
-  if (aiLicenseCropTimer) clearTimeout(aiLicenseCropTimer)
-  // 稍等挂车证可能随后到达（移动端常分两次上传）
-  aiLicenseCropTimer = setTimeout(() => {
-    aiLicenseCropTimer = null
-    const main = licensePaths.value.license
-    const hang = licensePaths.value.licenseGc || ''
-    if (!main) return
-    const key = `${main}||${hang}`
-    // 已有拼接且已处理过同源：跳过（历史回填 / 刚裁完）
-    if (licensePaths.value.licenseStitched) {
-      if (!aiLicenseCropLastKey || key === aiLicenseCropLastKey) {
-        aiLicenseCropLastKey = key
-        return
-      }
-    }
-    if (key === aiLicenseCropLastKey) return
-    void runAiLicenseCropSilent(main, hang)
-  }, 800)
-}
-
-watch(
-  () => [licensePaths.value.license, licensePaths.value.licenseGc] as const,
-  ([main]) => {
-    if (!main) {
-      aiLicenseCropLastKey = ''
-      return
-    }
-    scheduleAiLicenseCrop()
-  },
-)
-
 // ---- 车牌编辑 ----
 const licensePlateRef = ref<InstanceType<typeof LicensePlateEdit> | null>(null)
 const licensePlateGCRef = ref<InstanceType<typeof LicensePlateEdit> | null>(null)
@@ -720,12 +610,20 @@ type PlateHistoryData = {
   vehicle_container_type?: string
   vehicle_size?: string
   license_image_path?: string
+  /** 后端按磁盘解析后的主证（有旁路用旁路，否则用拼接图） */
+  license_image_main?: string
   license_image_path1?: string
   earliest_time?: string
   latest_time?: string
 }
 
-/** 车牌赋值后：查过往记录 → 回填字段 + 查验次数 */
+/** 表单空值：空串 / -- 视为未填，才允许历史回填 */
+function isFormBlank(v: string | undefined | null): boolean {
+  const s = String(v ?? '').trim()
+  return !s || s === '--'
+}
+
+/** 车牌赋值后：查过往记录 → 仅空字段回填 + 查验次数（已填不覆盖） */
 async function applyPlateHistory(plate: string) {
   const p = plate.trim()
   if (!p || p === '--') {
@@ -755,31 +653,56 @@ async function applyPlateHistory(plate: string) {
     }
     if (count <= 0) return
 
-    // 有历史则回填（仅覆盖有值的历史字段）
-    if (d.driver_phone) form.value.phone = d.driver_phone
-    if (d.gc_plate) form.value.plateGc = d.gc_plate
-    if (d.vehicle_type) form.value.truckType = d.vehicle_type
-    if (d.vehicle_container_type) form.value.containerType = d.vehicle_container_type
-    if (d.vehicle_size) {
+    // 仅空字段回填；已有内容不覆盖（避免扫码/改车牌冲掉当前录入的行驶证等）
+    if (d.driver_phone && isFormBlank(form.value.phone)) {
+      form.value.phone = d.driver_phone
+    }
+    if (d.gc_plate && isFormBlank(form.value.plateGc)) {
+      form.value.plateGc = d.gc_plate
+    }
+    if (d.vehicle_type && isFormBlank(form.value.truckType)) {
+      form.value.truckType = d.vehicle_type
+    }
+    if (d.vehicle_container_type && isFormBlank(form.value.containerType)) {
+      form.value.containerType = d.vehicle_container_type
+    }
+    if (d.vehicle_size && isFormBlank(form.value.size)) {
       form.value.size = /长/.test(d.vehicle_size)
         ? d.vehicle_size
         : formatVehicleSizeDisplay(d.vehicle_size)
     }
-    // 行驶证照片 → 弹窗路径 + 主页缩略图（库仅拼接图；主/挂按 -main/-hang 旁路）
-    if (d.license_image_path || d.license_image_path1) {
-      const stitched = d.license_image_path ? toImageUrl(d.license_image_path) : ''
-      const lic =
-        licenseSiblingApiUrl(d.license_image_path, 'main') || stitched
-      const licGc =
-        licenseSiblingApiUrl(d.license_image_path, 'hang') ||
-        (d.license_image_path1 ? toImageUrl(d.license_image_path1) : '')
-      licensePaths.value = {
-        license: lic || licensePaths.value.license,
-        licenseGc: licGc || licensePaths.value.licenseGc,
-        licenseStitched: stitched || licensePaths.value.licenseStitched,
+
+    if (d.license_image_path || d.license_image_main || d.license_image_path1) {
+      const needMain = !licensePaths.value.license
+      const needGc = !licensePaths.value.licenseGc
+      const needStitch = !licensePaths.value.licenseStitched
+      if (needMain || needGc || needStitch) {
+        const stitched = d.license_image_path ? toImageUrl(d.license_image_path) : ''
+        // 用后端校验过的 URL，禁止前端硬拼 -main/-hang（文件可能不存在 → 404）
+        const lic = d.license_image_main
+          ? toImageUrl(d.license_image_main)
+          : stitched
+        const licGc = d.license_image_path1 ? toImageUrl(d.license_image_path1) : ''
+        let filled = false
+        if (needMain && lic) {
+          licensePaths.value.license = lic
+          filled = true
+        }
+        if (needGc && licGc) {
+          licensePaths.value.licenseGc = licGc
+          filled = true
+        }
+        if (needStitch && stitched) {
+          licensePaths.value.licenseStitched = stitched
+          filled = true
+        }
+        if (filled) {
+          captureThumbs.value.license =
+            licensePaths.value.license || licensePaths.value.licenseGc || ''
+          // 仅本次从历史补进的图视为已裁切，避免再跑静默 AI
+          aiLicenseCropLastKey = `${licensePaths.value.license}||${licensePaths.value.licenseGc}`
+        }
       }
-      captureThumbs.value.license =
-        licensePaths.value.license || licensePaths.value.licenseGc || ''
     }
   } catch {
     form.value.historyCount = '--'
@@ -916,7 +839,305 @@ const captureLists = ref<{ goods: string[]; evidence: string[] }>({
   goods: [],
   evidence: [],
 })
+
+/** 将 AI 货物列表回填到表单（与农产品选择器同结构） */
+function applyAiGoodsFill(
+  goods: { code?: string; name?: string; pinyin?: string }[],
+  source: string,
+) {
+  const items = (goods || [])
+    .filter((g) => (g.code || g.name || '').trim())
+    .map((g) => ({
+      productCode: String(g.code || '').trim(),
+      varietyName: String(g.name || '').trim(),
+      varietyNamePinYin: String(g.pinyin || '').trim(),
+    }))
+  if (!items.length) return
+  previousSelection.value = items
+  form.value.goods = items.map((i) => i.varietyName).filter(Boolean).join('|')
+  form.value.goodsProductCode = items.map((i) => i.productCode).filter(Boolean).join('|')
+  form.value.goodsVarietyPinYin = items.map((i) => i.varietyNamePinYin).filter(Boolean).join('|')
+  console.info(
+    `[AI货物识别·${source}]`,
+    form.value.goods || form.value.goodsProductCode,
+  )
+}
+
+async function postAiGoodsDetect(endpoint: string, imageUrl: string, filename: string) {
+  const imgRes = await fetch(imageUrl)
+  if (!imgRes.ok) throw new Error(`读取图片失败: HTTP ${imgRes.status}`)
+  const blob = await imgRes.blob()
+  const fd = new FormData()
+  fd.append('image', new File([blob], filename, { type: blob.type || 'image/jpeg' }))
+
+  const token =
+    localStorage.getItem('lvtong_token') || sessionStorage.getItem('lvtong_token')
+  const headers: Record<string, string> = {}
+  if (token) headers.Authorization = `Bearer ${token}`
+
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), 120000)
+  let res: Response
+  try {
+    res = await fetch(`${appConfig.apiBaseUrl}/imaging/${endpoint}`, {
+      method: 'POST',
+      headers,
+      body: fd,
+      signal: controller.signal,
+    })
+  } finally {
+    clearTimeout(timer)
+  }
+
+  const json = (await res.json()) as {
+    code: number
+    message?: string
+    data?: {
+      goods?: { code?: string; name?: string; pinyin?: string; score?: number }[]
+      goods_type?: string
+      goods_name?: string
+    }
+  }
+  if (!res.ok || json.code !== 0 || !json.data) {
+    throw new Error(json.message || `HTTP ${res.status}`)
+  }
+  return json.data
+}
+
+/** AI 货物实物图（静默）：货物照片到位后自动识别 */
+const aiGoodsRealBusy = ref(false)
+let aiGoodsRealSeq = 0
+let aiGoodsRealLastKey = ''
+let aiGoodsRealTimer: ReturnType<typeof setTimeout> | null = null
+
+async function runAiGoodsRealSilent(imageUrl: string, key: string) {
+  if (aiGoodsRealBusy.value && aiGoodsRealLastKey === key) return
+  aiGoodsRealLastKey = key
+  const seq = ++aiGoodsRealSeq
+  aiGoodsRealBusy.value = true
+  try {
+    const data = await postAiGoodsDetect('ai-goods-real', imageUrl, 'goods.jpg')
+    if (seq !== aiGoodsRealSeq) return
+    applyAiGoodsFill(data.goods || [], '实物')
+  } catch (e) {
+    if (seq !== aiGoodsRealSeq) return
+    console.warn('[AI货物识别·实物]', e instanceof Error ? e.message : e)
+  } finally {
+    if (seq === aiGoodsRealSeq) aiGoodsRealBusy.value = false
+  }
+}
+
+function scheduleAiGoodsReal() {
+  if (aiGoodsRealTimer) clearTimeout(aiGoodsRealTimer)
+  aiGoodsRealTimer = setTimeout(() => {
+    aiGoodsRealTimer = null
+    const list = captureLists.value.goods || []
+    const url = list[list.length - 1] || ''
+    if (!url) return
+    const key = list.join('|')
+    if (key === aiGoodsRealLastKey && form.value.goods) return
+    void runAiGoodsRealSilent(url, key)
+  }, 500)
+}
+
+watch(
+  () => (captureLists.value.goods || []).join('|'),
+  (key) => {
+    if (!key) {
+      aiGoodsRealLastKey = ''
+      return
+    }
+    scheduleAiGoodsReal()
+  },
+)
+
+/** AI 货物透视图（静默）：透视拼接图到位后自动识别 */
+const aiGoodsXrayBusy = ref(false)
+let aiGoodsXraySeq = 0
+let aiGoodsXrayLastKey = ''
+let aiGoodsXrayTimer: ReturnType<typeof setTimeout> | null = null
+
+async function runAiGoodsXraySilent(mosaic: string) {
+  if (aiGoodsXrayBusy.value && aiGoodsXrayLastKey === mosaic) return
+  aiGoodsXrayLastKey = mosaic
+  const seq = ++aiGoodsXraySeq
+  aiGoodsXrayBusy.value = true
+  try {
+    const data = await postAiGoodsDetect('ai-goods-xray', mosaic, 'mosaic.jpg')
+    if (seq !== aiGoodsXraySeq) return
+    applyAiGoodsFill(data.goods || [], '透视')
+  } catch (e) {
+    if (seq !== aiGoodsXraySeq) return
+    console.warn('[AI货物识别·透视]', e instanceof Error ? e.message : e)
+  } finally {
+    if (seq === aiGoodsXraySeq) aiGoodsXrayBusy.value = false
+  }
+}
+
+function scheduleAiGoodsXray() {
+  if (aiGoodsXrayTimer) clearTimeout(aiGoodsXrayTimer)
+  aiGoodsXrayTimer = setTimeout(() => {
+    aiGoodsXrayTimer = null
+    const mosaic = xrayImageUrls.value.mosaic
+    if (!mosaic) return
+    if (mosaic === aiGoodsXrayLastKey && form.value.goods) return
+    void runAiGoodsXraySilent(mosaic)
+  }, 500)
+}
+
+watch(
+  () => xrayImageUrls.value.mosaic,
+  (mosaic) => {
+    if (!mosaic) {
+      aiGoodsXrayLastKey = ''
+      return
+    }
+    scheduleAiGoodsXray()
+  },
+)
+
 const licensePaths = ref({ license: '', licenseGc: '', licenseStitched: '' })
+
+/** AI 行驶证裁剪（静默）：主行驶证到位后自动调用；可带挂车证一起裁 */
+const aiLicenseCropBusy = ref(false)
+let aiLicenseCropSeq = 0
+let aiLicenseCropLastKey = ''
+let aiLicenseCropTimer: ReturnType<typeof setTimeout> | null = null
+
+async function srcToFileForAi(src: string, filename: string): Promise<File> {
+  const res = await fetch(src)
+  if (!res.ok) throw new Error(`读取图片失败: ${res.status}`)
+  const blob = await res.blob()
+  return new File([blob], filename, { type: blob.type || 'image/jpeg' })
+}
+
+async function runAiLicenseCropSilent(mainSrc: string, hangSrc: string) {
+  const key = `${mainSrc}||${hangSrc}`
+  if (aiLicenseCropBusy.value) {
+    console.info('[AI行驶证裁剪] 跳过：进行中')
+    return
+  }
+  if (key === aiLicenseCropLastKey) {
+    console.info('[AI行驶证裁剪] 跳过：同源已处理')
+    return
+  }
+  const seq = ++aiLicenseCropSeq
+  aiLicenseCropBusy.value = true
+  console.info(
+    '[AI行驶证裁剪] 开始',
+    hangSrc ? '主+挂' : '仅主证',
+    { main: mainSrc.slice(0, 48), hang: hangSrc ? hangSrc.slice(0, 48) : '' },
+  )
+  try {
+    const fd = new FormData()
+    fd.append('crop_image1', await srcToFileForAi(mainSrc, 'crop_image1.jpg'))
+    if (hangSrc) {
+      fd.append('crop_image2', await srcToFileForAi(hangSrc, 'crop_image2.jpg'))
+    }
+    const token =
+      localStorage.getItem('lvtong_token') || sessionStorage.getItem('lvtong_token')
+    const headers: Record<string, string> = {}
+    if (token) headers.Authorization = `Bearer ${token}`
+
+    const controller = new AbortController()
+    const timer = setTimeout(() => controller.abort(), 120000)
+    let res: Response
+    try {
+      res = await fetch(`${appConfig.apiBaseUrl}/license/ai-crop`, {
+        method: 'POST',
+        headers,
+        body: fd,
+        signal: controller.signal,
+      })
+    } finally {
+      clearTimeout(timer)
+    }
+
+    const json = (await res.json()) as {
+      code: number
+      message?: string
+      data?: {
+        imageDataUrl?: string
+        mainDataUrl?: string
+        hangDataUrl?: string
+        mode?: string
+      }
+    }
+    if (seq !== aiLicenseCropSeq) return
+    if (!res.ok || json.code !== 0 || !json.data?.imageDataUrl) {
+      throw new Error(json.message || `AI 裁剪失败（HTTP ${res.status}）`)
+    }
+
+    const d = json.data
+    licensePaths.value = {
+      license: d.mainDataUrl || d.imageDataUrl || mainSrc,
+      licenseGc: d.hangDataUrl || hangSrc || '',
+      licenseStitched: d.imageDataUrl || '',
+    }
+    captureThumbs.value.license =
+      licensePaths.value.license || licensePaths.value.licenseGc || ''
+    // 成功后记 key，避免对裁剪结果再次触发
+    aiLicenseCropLastKey = `${licensePaths.value.license}||${licensePaths.value.licenseGc}`
+    console.info('[AI行驶证裁剪] 静默完成', d.mode || '')
+  } catch (e) {
+    if (seq !== aiLicenseCropSeq) return
+    // 失败不记 lastKey，允许下次重试
+    console.warn('[AI行驶证裁剪]', e instanceof Error ? e.message : e)
+  } finally {
+    if (seq === aiLicenseCropSeq) aiLicenseCropBusy.value = false
+  }
+}
+
+function scheduleAiLicenseCrop() {
+  if (aiLicenseCropTimer) clearTimeout(aiLicenseCropTimer)
+  // 稍等挂车证可能随后到达（移动端常分两次上传）；弹窗关窗回写也会走这里
+  aiLicenseCropTimer = setTimeout(() => {
+    aiLicenseCropTimer = null
+    const main = licensePaths.value.license
+    const hang = licensePaths.value.licenseGc || ''
+    if (!main) {
+      console.info('[AI行驶证裁剪] 跳过：无主证')
+      return
+    }
+    const key = `${main}||${hang}`
+    // 注意：弹窗关闭时会本地拼一张 licenseStitched，不能据此当成「已 AI 裁切」而跳过
+    if (key === aiLicenseCropLastKey) {
+      console.info('[AI行驶证裁剪] 跳过：同源已处理')
+      return
+    }
+    void runAiLicenseCropSilent(main, hang)
+  }, 800)
+}
+
+watch(
+  () => [licensePaths.value.license, licensePaths.value.licenseGc] as const,
+  ([main]) => {
+    if (!main) {
+      aiLicenseCropLastKey = ''
+      return
+    }
+    scheduleAiLicenseCrop()
+  },
+)
+
+/** 任一静默 AI 进行中：禁止点确认，避免提交未裁切/未回填的中间态 */
+const aiSilentBusy = computed(
+  () =>
+    aiLoadRateBusy.value ||
+    aiTruckRealBusy.value ||
+    aiGoodsRealBusy.value ||
+    aiGoodsXrayBusy.value ||
+    aiLicenseCropBusy.value,
+)
+
+const aiSilentBusyHint = computed(() => {
+  if (!aiSilentBusy.value) return ''
+  if (aiLicenseCropBusy.value) return '行驶证 AI 裁剪中，请稍候…'
+  if (aiGoodsRealBusy.value || aiGoodsXrayBusy.value) return '货物 AI 识别中，请稍候…'
+  if (aiTruckRealBusy.value) return '车型/货箱 AI 识别中，请稍候…'
+  if (aiLoadRateBusy.value) return '满载率 AI 计算中，请稍候…'
+  return 'AI 处理中，请稍候…'
+})
 
 /** 通行码 14 字段（对齐 Qt PassCodeUtil::GetPassCodeInfoByCodeStr） */
 const passcode = ref<{
@@ -1091,6 +1312,18 @@ function doReset() {
     clearTimeout(aiLicenseCropTimer)
     aiLicenseCropTimer = null
   }
+  aiGoodsRealLastKey = ''
+  aiGoodsRealSeq += 1
+  if (aiGoodsRealTimer) {
+    clearTimeout(aiGoodsRealTimer)
+    aiGoodsRealTimer = null
+  }
+  aiGoodsXrayLastKey = ''
+  aiGoodsXraySeq += 1
+  if (aiGoodsXrayTimer) {
+    clearTimeout(aiGoodsXrayTimer)
+    aiGoodsXrayTimer = null
+  }
   // 清通行码
   passcode.value = null
   // 清工作流状态
@@ -1197,6 +1430,10 @@ function buildSubmitPreview(): InspectionDetail {
 
 async function onConfirm() {
   /** 对齐 LvTongPro::onConfirmClicked：先弹查验记录预览，再写库 */
+  if (aiSilentBusy.value) {
+    alert(aiSilentBusyHint.value || 'AI 处理中，请稍候再确认')
+    return
+  }
   if (!form.value.goods) {
     alert('请选择农产品类型')
     return
@@ -1229,6 +1466,36 @@ async function onSubmitConfirmYes(payload?: {
 }) {
   showSubmitPreview.value = false
   submitPreview.value = null
+
+  if (aiSilentBusy.value) {
+    alert(aiSilentBusyHint.value || 'AI 处理中，请稍候再提交')
+    return
+  }
+
+  // 行驶证 blob: 后端无法读取 → 提交前转 dataURL，保证三件套（拼接/-main/-hang）都能落盘
+  async function materializeForSubmit(src: string): Promise<string> {
+    if (!src) return ''
+    if (!src.startsWith('blob:')) return toStoragePath(src)
+    try {
+      const res = await fetch(src)
+      if (!res.ok) return ''
+      const blob = await res.blob()
+      return await new Promise<string>((resolve, reject) => {
+        const fr = new FileReader()
+        fr.onload = () => resolve(String(fr.result || ''))
+        fr.onerror = () => reject(fr.error || new Error('read fail'))
+        fr.readAsDataURL(blob)
+      })
+    } catch (e) {
+      console.warn('[submit] 行驶证 blob 转 dataURL 失败', e)
+      return ''
+    }
+  }
+  const [licStitched, licMain, licHang] = await Promise.all([
+    materializeForSubmit(licensePaths.value.licenseStitched || ''),
+    materializeForSubmit(licensePaths.value.license || ''),
+    materializeForSubmit(licensePaths.value.licenseGc || ''),
+  ])
 
   // ---- 1. 组装 body（50+ 字段，对齐 Qt VehicleInspection） ----
   // 图片统一交给后端 persist_to_storage 归一：前端只负责把"任何形态的引用"
@@ -1264,9 +1531,9 @@ async function onSubmitConfirmYes(payload?: {
     goods_image_path: joinImagePaths(captureLists.value.goods || []),
     evidences_image_path: joinImagePaths(captureLists.value.evidence || []),
     // 行驶证：落库用拼接图；主/挂旁路落盘（-main / -hang）
-    license_image_path: toStoragePath(licensePaths.value.licenseStitched || ''),
-    license_image_main: toStoragePath(licensePaths.value.license || ''),
-    license_image_hang: toStoragePath(licensePaths.value.licenseGc || ''),
+    license_image_path: licStitched,
+    license_image_main: licMain,
+    license_image_hang: licHang,
     license_image_path1: '',
     // 查验/班组用登录用户；复核人暂时留空
     operator_name: auth.user?.realName || '',
@@ -2034,7 +2301,14 @@ const anyDialogOpen = computed(
 
           <div class="form-footer">
             <button class="btn-reset" @click="onReset">重置</button>
-            <button class="btn-confirm" @click="onConfirm">确认</button>
+            <button
+              class="btn-confirm"
+              :disabled="aiSilentBusy"
+              :title="aiSilentBusy ? aiSilentBusyHint : '确认提交'"
+              @click="onConfirm"
+            >
+              {{ aiSilentBusy ? 'AI处理中…' : '确认' }}
+            </button>
           </div>
         </div>
       </section>
@@ -2728,6 +3002,11 @@ const anyDialogOpen = computed(
   font-size: 14px;
   font-weight: bold;
   cursor: pointer;
-  &:hover { background: #047857; }
+  &:hover:not(:disabled) { background: #047857; }
+  &:disabled {
+    opacity: 0.55;
+    cursor: not-allowed;
+    background: #6b7280;
+  }
 }
 </style>

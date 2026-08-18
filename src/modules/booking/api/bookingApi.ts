@@ -18,16 +18,18 @@ export const DEFAULT_HEAD_WIDTH = 1.5
 export function createHttpBookingApi(): BookingPort {
   return {
     async fetchRadarImage() {
-      const res = await request<RadarImageResponse>('/booking/radar-image')
+      // 后端最多 3×12s 重试，前端超时放宽避免被 Abort
+      const res = await request<RadarImageResponse>('/booking/radar-image', {
+        timeout: 60000,
+      })
       if (res.code === 0 && res.data?.imageUrl) {
         return res.data
       }
-      // 允许无图：返回 data 供高度等字段使用，或 null
       if (res.code === 0 && res.data) {
         return res.data.imageUrl ? res.data : null
       }
       console.warn('[BookingPort] 雷达图像获取失败:', res.message)
-      return null
+      throw new Error(res.message || '雷达图像获取失败')
     },
 
     async openDialog() {

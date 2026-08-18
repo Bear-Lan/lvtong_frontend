@@ -27,6 +27,9 @@ export function useBookingDialog() {
   const loading = ref(false)
   const submitting = ref(false)
   const radarImageUrl = ref<string | null>(null)
+  /** 雷达拉取已最终失败（重试用尽）— 允许驳回，受理仍需有图 */
+  const radarFetchFailed = ref(false)
+  const radarRetryAttempt = ref(0)
   const linePosition = ref(0.5) // 对齐 ImageLabelWithLine 默认中间
   const imageEnvelope = ref('')
   const vehicleHeaderEnvelope = ref('')
@@ -84,55 +87,79 @@ export function useBookingDialog() {
 
   watch(linePosition, updateCarHeadLength)
 
-  async function refreshRadarImage() {
+  async function refreshRadarImage(options?: { maxRetries?: number }) {
+    const maxRetries = Math.max(1, options?.maxRetries ?? 2)
     loading.value = true
     errorMessage.value = ''
+    radarFetchFailed.value = false
+    radarRetryAttempt.value = 0
+
+    let lastErr = ''
     try {
-      const data = await api.fetchRadarImage()
-      if (!data) {
-        radarImageUrl.value = null
-        originalImageWidth.value = 0
-        return
-      }
+      for (let attempt = 1; attempt <= maxRetries; attempt++) {
+        radarRetryAttempt.value = attempt
+        try {
+          const data = await api.fetchRadarImage()
+          if (data?.imageUrl) {
+            radarImageUrl.value = data.imageUrl
+            imageEnvelope.value = data.imageEnvelope || ''
+            vehicleHeaderEnvelope.value = data.vehicleHeaderEnvelope || ''
+            originalImageWidth.value = data.originalImageWidth || 0
+            if (data.vehicleHeight > 0) {
+              vehicleHeight.value = data.vehicleHeight
+            }
 
-      radarImageUrl.value = data.imageUrl || null
-      imageEnvelope.value = data.imageEnvelope || ''
-      vehicleHeaderEnvelope.value = data.vehicleHeaderEnvelope || ''
-      originalImageWidth.value = data.originalImageWidth || 0
-      if (data.vehicleHeight > 0) {
-        vehicleHeight.value = data.vehicleHeight
-      }
+            console.info(
+              '[Booking] radar meta',
+              `attempt=${attempt}/${maxRetries}`,
+              `w=${originalImageWidth.value}`,
+              `env=${imageEnvelope.value || '-'}`,
+              `hdr=${vehicleHeaderEnvelope.value || '-'}`,
+              `originX=${data.contentOriginX ?? '-'}`,
+            )
 
-      console.info(
-        '[Booking] radar meta',
-        `w=${originalImageWidth.value}`,
-        `env=${imageEnvelope.value || '-'}`,
-        `hdr=${vehicleHeaderEnvelope.value || '-'}`,
-        `originX=${data.contentOriginX ?? '-'}`,
-      )
+            const width = data.originalImageWidth || 0
+            const fromEnvelope = parseImageEnvelope(data.imageEnvelope, width)
+            if (fromEnvelope != null) {
+              linePosition.value = fromEnvelope
+            } else {
+              const originPx =
+                typeof data.contentOriginX === 'number' && data.contentOriginX > 0
+                  ? data.contentOriginX
+                  : envelopeFirstNumber(data.vehicleHeaderEnvelope || '')
+              const fromOrigin = defaultLinePositionAfterOrigin(
+                originPx,
+                width,
+                DEFAULT_HEAD_WIDTH,
+              )
+              if (fromOrigin != null) {
+                linePosition.value = fromOrigin
+              }
+            }
+            updateCarHeadLength()
+            radarFetchFailed.value = false
+            errorMessage.value = ''
+            return
+          }
+          lastErr = '雷达未返回图像'
+        } catch (e) {
+          lastErr = e instanceof Error ? e.message : '雷达图获取失败'
+          console.warn(`[Booking] radar attempt ${attempt}/${maxRetries}:`, lastErr)
+        }
 
-      const width = data.originalImageWidth || 0
-      // 优先中间层 Image-Envelope；否则：有颜色起点 + 默认车头长 1.5m
-      const fromEnvelope = parseImageEnvelope(data.imageEnvelope, width)
-      if (fromEnvelope != null) {
-        linePosition.value = fromEnvelope
-      } else {
-        const originPx =
-          typeof data.contentOriginX === 'number' && data.contentOriginX > 0
-            ? data.contentOriginX
-            : envelopeFirstNumber(data.vehicleHeaderEnvelope || '')
-        const fromOrigin = defaultLinePositionAfterOrigin(originPx, width, DEFAULT_HEAD_WIDTH)
-        if (fromOrigin != null) {
-          linePosition.value = fromOrigin
+        if (attempt < maxRetries) {
+          errorMessage.value = `雷达图获取失败，正在重试（${attempt}/${maxRetries}）…`
+          await new Promise((r) => setTimeout(r, 1200))
         }
       }
-      updateCarHeadLength()
-    } catch (e) {
-      errorMessage.value = e instanceof Error ? e.message : '雷达图获取失败'
+
       radarImageUrl.value = null
       originalImageWidth.value = 0
+      radarFetchFailed.value = true
+      errorMessage.value = `${lastErr || '雷达图获取失败'}（可点刷新重试；无图时仍可驳回）`
     } finally {
       loading.value = false
+      radarRetryAttempt.value = 0
     }
   }
 
@@ -147,6 +174,7 @@ export function useBookingDialog() {
     vehicleHeaderEnvelope.value = ''
     originalImageWidth.value = 0
     errorMessage.value = ''
+    radarFetchFailed.value = false
 
     try {
       const openResult = await api.openDialog()
@@ -160,7 +188,7 @@ export function useBookingDialog() {
       console.warn('[BookingDialog] openDialog 失败:', e)
     }
 
-    await refreshRadarImage()
+    await refreshRadarImage({ maxRetries: 2 })
   }
 
   /** 对齐 onCarTypeClicked */
@@ -234,6 +262,7 @@ export function useBookingDialog() {
     loading,
     submitting,
     radarImageUrl,
+    radarFetchFailed,
     linePosition,
     vehicleHeight,
     carHeadLength,

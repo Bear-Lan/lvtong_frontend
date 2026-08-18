@@ -24,6 +24,7 @@ const {
   loading,
   submitting,
   radarImageUrl,
+  radarFetchFailed,
   linePosition,
   xrayEnabled,
   confirmVisible,
@@ -115,18 +116,27 @@ const talkReady = computed(() => talkStatus.value === 'playing' || talking.value
 const radarReady = computed(
   () => !!radarImageUrl.value && radarImageReady.value && !loading.value,
 )
-/** 对讲 + 视频 + 左侧图都就绪后才可受理/驳回 */
-const canDecide = computed(
-  () => videoReady.value && talkReady.value && radarReady.value,
+/** 受理：对讲 + 视频 + 左侧图都就绪 */
+const canAccept = computed(
+  () => videoReady.value && talkReady.value && radarReady.value && !submitting.value,
+)
+/** 驳回：拉图失败或非加载中即可驳回（避免雷达超时把界面卡死） */
+const canReject = computed(
+  () => !submitting.value && !loading.value && (radarReady.value || radarFetchFailed.value),
 )
 const decideHint = computed(() => {
-  if (canDecide.value || submitting.value) return ''
+  if (submitting.value) return ''
+  if (loading.value) return '正在拉取雷达图（失败会自动重试），请稍候…'
+  if (canAccept.value) return ''
+  if (radarFetchFailed.value && !radarReady.value) {
+    return '雷达图拉取失败：可点刷新重试，或直接驳回'
+  }
   const missing: string[] = []
   if (!radarReady.value) missing.push('左侧图')
   if (!videoReady.value) missing.push('视频')
   if (!talkReady.value) missing.push('对讲')
   if (!missing.length) return ''
-  return `请等待${missing.join('、')}加载完成后再受理或驳回`
+  return `请等待${missing.join('、')}加载完成后再受理`
 })
 
 function onRadarImageLoaded() {
@@ -164,17 +174,17 @@ async function handleConfirmYes() {
 }
 
 function onOverlayClick() {
-  if (submitting.value) return
+  if (submitting.value || loading.value) return
   requestConfirm('close')
 }
 
 function onRejectClick() {
-  if (submitting.value || !canDecide.value) return
+  if (!canReject.value) return
   requestConfirm('reject')
 }
 
 function onAcceptClick() {
-  if (submitting.value || !canDecide.value) return
+  if (!canAccept.value) return
   requestConfirm('accept')
 }
 
@@ -239,9 +249,9 @@ onBeforeUnmount(() => {
         <button
           type="button"
           class="btn-refresh"
-          title="点击刷新"
+          title="点击刷新雷达图"
           :disabled="loading || submitting"
-          @click="refreshRadarImage"
+          @click="() => refreshRadarImage({ maxRetries: 2 })"
         >
           <img src="/assets/img/a_refresh.png" alt="刷新" />
         </button>
@@ -293,8 +303,8 @@ onBeforeUnmount(() => {
         <button
           type="button"
           class="btn-reject"
-          :disabled="submitting || !canDecide"
-          :title="decideHint || '驳回'"
+          :disabled="!canReject"
+          :title="canReject ? '驳回' : decideHint || '驳回'"
           @click="onRejectClick"
         >
           <img src="/assets/img/a_dismiss.png" alt="" />
@@ -304,8 +314,8 @@ onBeforeUnmount(() => {
         <button
           type="button"
           class="btn-accept"
-          :disabled="submitting || !canDecide"
-          :title="decideHint || '受理'"
+          :disabled="!canAccept"
+          :title="canAccept ? '受理' : decideHint || '受理'"
           @click="onAcceptClick"
         >
           <img src="/assets/img/a_accept.png" alt="" />

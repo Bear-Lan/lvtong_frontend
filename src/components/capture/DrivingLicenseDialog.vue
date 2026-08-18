@@ -93,17 +93,38 @@ function onFileChosen(e: Event) {
   const file = input.files?.[0]
   input.value = ''
   if (!file || !pickTarget.value) return
-  const url = URL.createObjectURL(file)
-  if (pickTarget.value === 'main') {
-    if (license.value.startsWith('blob:')) URL.revokeObjectURL(license.value)
-    license.value = url
-    licenseStitched.value = ''
-  } else {
-    if (licenseGc.value.startsWith('blob:')) URL.revokeObjectURL(licenseGc.value)
-    licenseGc.value = url
-    licenseStitched.value = ''
-  }
+  const reader = new FileReader()
+  const target = pickTarget.value
   pickTarget.value = null
+  reader.onload = () => {
+    const dataUrl = String(reader.result || '')
+    if (!dataUrl) return
+    if (target === 'main') {
+      if (license.value.startsWith('blob:')) URL.revokeObjectURL(license.value)
+      license.value = dataUrl
+      licenseStitched.value = ''
+    } else {
+      if (licenseGc.value.startsWith('blob:')) URL.revokeObjectURL(licenseGc.value)
+      licenseGc.value = dataUrl
+      licenseStitched.value = ''
+    }
+  }
+  reader.readAsDataURL(file)
+}
+
+/** blob:/http(s) → dataURL，保证提交后后端能落 -main/-hang */
+async function toDataUrl(src: string): Promise<string> {
+  if (!src) return ''
+  if (src.startsWith('data:')) return src
+  const res = await fetch(src)
+  if (!res.ok) throw new Error(`读取图片失败: ${res.status}`)
+  const blob = await res.blob()
+  return await new Promise<string>((resolve, reject) => {
+    const fr = new FileReader()
+    fr.onload = () => resolve(String(fr.result || ''))
+    fr.onerror = () => reject(fr.error || new Error('FileReader failed'))
+    fr.readAsDataURL(blob)
+  })
 }
 
 function askDelete(which: 'main' | 'gc') {
@@ -155,6 +176,25 @@ async function stitchVerticalDataUrl(src1: string, src2: string): Promise<string
 
 /** 对齐 onClose：关窗并回写路径（主/挂分开 + 拼接图） */
 async function onClose() {
+  try {
+    // 提交依赖 dataURL/磁盘路径；blob: 后端无法读取，关窗前强制转 dataURL
+    if (license.value.startsWith('blob:')) {
+      const u = license.value
+      license.value = await toDataUrl(u)
+      URL.revokeObjectURL(u)
+    }
+    if (licenseGc.value.startsWith('blob:')) {
+      const u = licenseGc.value
+      licenseGc.value = await toDataUrl(u)
+      URL.revokeObjectURL(u)
+    }
+  } catch (e) {
+    tipOk.value = false
+    tipMessage.value = e instanceof Error ? e.message : '行驶证图片转换失败'
+    tipVisible.value = true
+    return
+  }
+
   let stitched = licenseStitched.value
   try {
     if (!stitched && license.value && licenseGc.value) {
