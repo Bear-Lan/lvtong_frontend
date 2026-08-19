@@ -437,6 +437,7 @@ function isUsablePlate(plate: string): boolean {
 }
 
 function truckTypeFromWheels(wheelCount: number, plateColor: string, plate: string): string {
+  // 对齐 JT/T 489：≤2 看牌色；3~5 几轴几型；≥6 → 六型。与后端一致。
   const axles = Number(wheelCount) || 0
   if (axles <= 0) return ''
   if (axles <= 2) {
@@ -447,8 +448,8 @@ function truckTypeFromWheels(wheelCount: number, plateColor: string, plate: stri
     }
     return '12'
   }
-  if (axles >= 7) return '16'
-  return String(9 + axles)
+  if (axles >= 6) return '16'
+  return String(10 + axles)
 }
 
 function applyTruckTypeFromLastWheels() {
