@@ -143,7 +143,7 @@ async function selectCamera(name: string) {
   const prevId = currentDeviceId.value
   activeCamera.value = name
 
-  // 同一物理设备（如四路枪机共用 camera2）只改高亮
+  // 同一物理设备（车道枪机 cam_lane）只改高亮
   if (nextId === prevId) return
 
   switchingCamera.value = true

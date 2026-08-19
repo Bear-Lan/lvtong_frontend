@@ -43,7 +43,7 @@ const {
   confirmYes,
 } = useBookingDialog()
 
-// ---- 画面：MediaMTX WHEP（camera4 / cam4）----
+// ---- 画面：MediaMTX WHEP（cam_booking → /mtx/cam4）----
 const liveVideoRef = ref<HTMLVideoElement | null>(null)
 const {
   status: videoStatus,
