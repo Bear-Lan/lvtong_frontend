@@ -58,6 +58,9 @@ export function useHikvisionPlayer(anchorRef: Ref<HTMLElement | null>) {
   let captureWaiters: Array<(r: { ok: boolean; dataUrl?: string; message?: string }) => void> =
     []
   let talkWaiters: Array<(r: { ok: boolean; talking: boolean; error?: string }) => void> = []
+  let presetWaiters: Array<
+    (r: { ok: boolean; action: 'set' | 'goto'; id: number; message?: string }) => void
+  > = []
   let ptzAutoOn = false
 
   const OFFSCREEN_LAYOUT: HikLayoutRect = {
@@ -197,6 +200,21 @@ export function useHikvisionPlayer(anchorRef: Ref<HTMLElement | null>) {
           ok: !!data.ok,
           dataUrl: data.dataUrl,
           message: data.message,
+        }),
+      )
+      return
+    }
+
+    if (data.type === 'hik-preset-result') {
+      const waiters = presetWaiters
+      presetWaiters = []
+      const action = data.action === 'set' ? 'set' : 'goto'
+      waiters.forEach((fn) =>
+        fn({
+          ok: !!data.ok,
+          action,
+          id: Number(data.id) || 0,
+          message: data.message ? String(data.message) : undefined,
         }),
       )
     }
@@ -349,6 +367,41 @@ export function useHikvisionPlayer(anchorRef: Ref<HTMLElement | null>) {
     postToIframe({ type: 'hik-ptz', index: stopIndex, stop: true, speed: DEFAULT_PTZ_SPEED })
   }
 
+  function requestPreset(action: 'set' | 'goto', id: number): Promise<void> {
+    return new Promise((resolve, reject) => {
+      if (status.value !== 'playing') {
+        reject(new Error('预览未就绪'))
+        return
+      }
+      if (!(id >= 1 && id <= 9)) {
+        reject(new Error('预置点仅支持 1-9'))
+        return
+      }
+      presetWaiters.push((r) => {
+        if (r.ok) resolve()
+        else reject(new Error(r.message || (action === 'set' ? '设置预置点失败' : '调用预置点失败')))
+      })
+      postToIframe({ type: 'hik-preset', action, id })
+      window.setTimeout(() => {
+        if (presetWaiters.length) {
+          const waiters = presetWaiters
+          presetWaiters = []
+          waiters.forEach((fn) =>
+            fn({ ok: false, action, id, message: '预置点操作超时' }),
+          )
+        }
+      }, 8000)
+    })
+  }
+
+  function setPreset(id: number) {
+    return requestPreset('set', id)
+  }
+
+  function goPreset(id: number) {
+    return requestPreset('goto', id)
+  }
+
   function onWinResize() {
     postLayout(false)
   }
@@ -382,5 +435,7 @@ export function useHikvisionPlayer(anchorRef: Ref<HTMLElement | null>) {
     toggleTalk,
     ptzStart,
     ptzStop,
+    setPreset,
+    goPreset,
   }
 }

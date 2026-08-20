@@ -83,10 +83,89 @@ const {
   postLayout,
   ptzStart,
   ptzStop,
+  setPreset,
+  goPreset,
 } = useHikvisionPlayer(liveStageRef)
 
 const liveHint = computed(() => hikStatusText.value || '实时摄像头画面区域')
 const showLiveHint = computed(() => hikStatus.value !== 'playing')
+
+/** 球机预置位 1-9：本机记住「已设置」状态；真正坐标在摄像机内 */
+const PRESET_IDS = [1, 2, 3, 4, 5, 6, 7, 8, 9] as const
+const presetSetMode = ref(false)
+const presetBusy = ref(false)
+const presetHint = ref('')
+const presetConfigured = ref<Set<number>>(new Set())
+
+function presetStorageKey(deviceId: string) {
+  return `gcms_ptz_presets_${deviceId || 'cam_ptz'}`
+}
+
+function loadPresetConfigured(deviceId: string) {
+  try {
+    const raw = localStorage.getItem(presetStorageKey(deviceId))
+    const arr = raw ? (JSON.parse(raw) as number[]) : []
+    presetConfigured.value = new Set(
+      (Array.isArray(arr) ? arr : []).filter((n) => n >= 1 && n <= 9),
+    )
+  } catch {
+    presetConfigured.value = new Set()
+  }
+}
+
+function savePresetConfigured(deviceId: string) {
+  localStorage.setItem(
+    presetStorageKey(deviceId),
+    JSON.stringify([...presetConfigured.value].sort((a, b) => a - b)),
+  )
+}
+
+function markPresetConfigured(id: number) {
+  const next = new Set(presetConfigured.value)
+  next.add(id)
+  presetConfigured.value = next
+  savePresetConfigured(currentDeviceId.value)
+}
+
+async function onPresetClick(id: number) {
+  if (!showPtz.value || hikStatus.value !== 'playing' || presetBusy.value) return
+  presetBusy.value = true
+  presetHint.value = ''
+  try {
+    if (presetSetMode.value) {
+      await setPreset(id)
+      markPresetConfigured(id)
+      presetHint.value = `预置位 ${id} 已设置`
+      presetSetMode.value = false
+    } else {
+      await goPreset(id)
+      presetHint.value = `已转到预置位 ${id}`
+    }
+  } catch (e) {
+    presetHint.value = e instanceof Error ? e.message : '预置位操作失败'
+  } finally {
+    presetBusy.value = false
+  }
+}
+
+function onPresetKeydown(ev: KeyboardEvent) {
+  if (!showPtz.value || hikStatus.value !== 'playing') return
+  if (ev.ctrlKey || ev.altKey || ev.metaKey) return
+  const t = ev.target as HTMLElement | null
+  if (t) {
+    const tag = t.tagName
+    if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || t.isContentEditable) {
+      return
+    }
+  }
+  // 主键盘与小键盘数字 1-9
+  let id = 0
+  if (ev.code.startsWith('Digit')) id = Number(ev.code.slice(5))
+  else if (ev.code.startsWith('Numpad')) id = Number(ev.code.slice(6))
+  if (!(id >= 1 && id <= 9)) return
+  ev.preventDefault()
+  void onPresetClick(id)
+}
 
 const countText = computed(() => {
   if (!isMulti.value) return ''
@@ -124,6 +203,8 @@ watch(
 
 onMounted(async () => {
   syncKind()
+  loadPresetConfigured(resolveCameraDeviceId(activeCamera.value))
+  window.addEventListener('keydown', onPresetKeydown)
   await nextTick()
   await new Promise<void>((r) => requestAnimationFrame(() => r()))
   startHik(resolveCameraDeviceId(activeCamera.value))
@@ -132,6 +213,7 @@ onMounted(async () => {
 })
 
 onBeforeUnmount(() => {
+  window.removeEventListener('keydown', onPresetKeydown)
   void stopHik()
 })
 
@@ -147,6 +229,9 @@ async function selectCamera(name: string) {
   if (nextId === prevId) return
 
   switchingCamera.value = true
+  presetSetMode.value = false
+  presetHint.value = ''
+  loadPresetConfigured(nextId)
   try {
     await stopHik()
     await nextTick()
@@ -449,6 +534,43 @@ function openPreview() {
                 <button type="button" class="ptz-talk" disabled title="对讲稍后接入">
                   <img src="/assets/img/a_talkstart.png" alt="对讲" />
                 </button>
+              </div>
+              <div class="ptz-presets">
+                <div class="ptz-presets-head">
+                  <span class="ptz-presets-lab">预置位</span>
+                  <button
+                    type="button"
+                    class="ptz-set-mode"
+                    :class="{ on: presetSetMode }"
+                    :disabled="hikStatus !== 'playing' || presetBusy"
+                    title="开启后点 1-9 保存当前云台位置"
+                    @click="presetSetMode = !presetSetMode"
+                  >
+                    {{ presetSetMode ? '设置中…点数字保存' : '设置预置位' }}
+                  </button>
+                </div>
+                <div class="ptz-presets-grid">
+                  <button
+                    v-for="id in PRESET_IDS"
+                    :key="id"
+                    type="button"
+                    class="ptz-preset-btn"
+                    :class="{
+                      set: presetConfigured.has(id),
+                      arm: presetSetMode,
+                    }"
+                    :disabled="hikStatus !== 'playing' || presetBusy"
+                    :title="
+                      presetSetMode
+                        ? `将当前位置设为预置位 ${id}`
+                        : `转到预置位 ${id}（键盘 ${id}）`
+                    "
+                    @click="onPresetClick(id)"
+                  >
+                    {{ id }}
+                  </button>
+                </div>
+                <div v-if="presetHint" class="ptz-preset-hint">{{ presetHint }}</div>
               </div>
             </div>
 
@@ -773,8 +895,8 @@ function openPreview() {
   flex-direction: row;
   align-items: stretch;
   gap: 12px;
-  height: 160px;
-  min-height: 160px;
+  height: 210px;
+  min-height: 210px;
 }
 
 /* 模拟 Qt QGroupBox：内部横纵 1fr 铺满，对称饱满 */
@@ -811,7 +933,6 @@ function openPreview() {
   align-items: stretch;
   gap: 10px;
   width: 100%;
-  height: 100%;
   min-height: 0;
   box-sizing: border-box;
 }
@@ -896,6 +1017,93 @@ function openPreview() {
     /* 深灰近黑，提高对比 */
     filter: brightness(0) invert(18%);
   }
+}
+
+.ptz-presets {
+  margin-top: 6px;
+  width: 100%;
+  flex: 0 0 auto;
+}
+
+.ptz-presets-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 4px;
+}
+
+.ptz-presets-lab {
+  font-size: 12px;
+  color: #64748b;
+  font-weight: 600;
+}
+
+.ptz-set-mode {
+  border: 1px solid #cbd5e1;
+  background: #fff;
+  color: #334155;
+  border-radius: 4px;
+  font-size: 11px;
+  padding: 2px 8px;
+  cursor: pointer;
+  white-space: nowrap;
+  &:hover:not(:disabled) {
+    border-color: #f59e0b;
+    color: #b45309;
+  }
+  &.on {
+    background: #fff7ed;
+    border-color: #f59e0b;
+    color: #c2410c;
+  }
+  &:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+}
+
+.ptz-presets-grid {
+  display: grid;
+  grid-template-columns: repeat(9, minmax(0, 1fr));
+  gap: 3px;
+}
+
+.ptz-preset-btn {
+  height: 26px;
+  border: 1px solid #cbd5e1;
+  border-radius: 4px;
+  background: #f8fafc;
+  color: #334155;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+  padding: 0;
+  &:hover:not(:disabled) {
+    border-color: #22c55e;
+    background: #f0fdf4;
+  }
+  &.set {
+    border-color: #22c55e;
+    background: #dcfce7;
+    color: #166534;
+  }
+  &.arm {
+    border-color: #f59e0b;
+    background: #fffbeb;
+  }
+  &:disabled {
+    opacity: 0.45;
+    cursor: not-allowed;
+  }
+}
+
+.ptz-preset-hint {
+  margin-top: 3px;
+  font-size: 11px;
+  color: #64748b;
+  line-height: 1.3;
+  min-height: 14px;
 }
 
 .actions {

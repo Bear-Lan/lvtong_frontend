@@ -97,6 +97,20 @@ interface WebVideoCtrlStatic {
       error?: (oError?: { errorCode?: number; errorMsg?: string }) => void
     },
   ): void
+  I_SetPreset?(
+    iPresetID: number,
+    options?: {
+      success?: (xmlDoc?: unknown) => void
+      error?: (oError?: { errorCode?: number; errorMsg?: string }) => void
+    },
+  ): void
+  I_GoPreset?(
+    iPresetID: number,
+    options?: {
+      success?: (xmlDoc?: unknown) => void
+      error?: (oError?: { errorCode?: number; errorMsg?: string }) => void
+    },
+  ): void
 }
 
 interface Window {

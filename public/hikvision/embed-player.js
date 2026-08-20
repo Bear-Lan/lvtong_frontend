@@ -849,6 +849,161 @@
     }
   }
 
+  function resolvePtzChannelId() {
+    var channelId = g_playChannelId || 1
+    try {
+      var oWndInfo = WebVideoCtrl.I_GetWindowStatus(g_iWndIndex)
+      if (oWndInfo && oWndInfo.iChannelID > 0) {
+        channelId = oWndInfo.iChannelID
+        g_playChannelId = channelId
+      }
+    } catch (e) {}
+    return channelId
+  }
+
+  /**
+   * 预置点：优先 ISAPI（与 continuous 云台同路），失败再试 SDK I_SetPreset / I_GoPreset。
+   * action: 'set' | 'goto'；id: 1~9
+   */
+  function handlePreset(payload) {
+    var p = payload || {}
+    var action = p.action === 'set' ? 'set' : 'goto'
+    var presetId = parseInt(p.id, 10)
+    if (!g_deviceIdentify || !(presetId >= 1 && presetId <= 255)) {
+      post({
+        type: 'hik-preset-result',
+        ok: false,
+        action: action,
+        id: presetId,
+        message: '预置点参数无效',
+      })
+      return
+    }
+    if (typeof WebVideoCtrl === 'undefined') {
+      post({
+        type: 'hik-preset-result',
+        ok: false,
+        action: action,
+        id: presetId,
+        message: '插件未就绪',
+      })
+      return
+    }
+
+    var oWndInfo = null
+    try {
+      oWndInfo = WebVideoCtrl.I_GetWindowStatus(g_iWndIndex)
+    } catch (e) {}
+    if (!oWndInfo) {
+      post({
+        type: 'hik-preset-result',
+        ok: false,
+        action: action,
+        id: presetId,
+        message: '预览窗口未就绪',
+      })
+      return
+    }
+
+    var channelId = resolvePtzChannelId()
+    var analogBase = 'ISAPI/PTZCtrl/channels/' + channelId + '/presets/' + presetId
+    var digitalBase =
+      'ISAPI/ContentMgmt/PTZCtrlProxy/channels/' + channelId + '/presets/' + presetId
+    var setBody =
+      "<?xml version='1.0' encoding='UTF-8'?>" +
+      '<PTZPreset><id>' +
+      presetId +
+      '</id></PTZPreset>'
+
+    function finishOk() {
+      post({
+        type: 'hik-preset-result',
+        ok: true,
+        action: action,
+        id: presetId,
+        message: action === 'set' ? '预置点已设置' : '已转到预置点',
+      })
+    }
+
+    function finishErr(oError) {
+      post({
+        type: 'hik-preset-result',
+        ok: false,
+        action: action,
+        id: presetId,
+        message: formatPtzError(oError) || (action === 'set' ? '设置预置点失败' : '调用预置点失败'),
+      })
+    }
+
+    function trySdkPreset() {
+      return new Promise(function (resolve, reject) {
+        if (action === 'set' && typeof WebVideoCtrl.I_SetPreset === 'function') {
+          WebVideoCtrl.I_SetPreset(presetId, {
+            success: function () {
+              resolve()
+            },
+            error: function (oError) {
+              reject(oError)
+            },
+          })
+          return
+        }
+        if (action === 'goto' && typeof WebVideoCtrl.I_GoPreset === 'function') {
+          WebVideoCtrl.I_GoPreset(presetId, {
+            success: function () {
+              resolve()
+            },
+            error: function (oError) {
+              reject(oError)
+            },
+          })
+          return
+        }
+        reject({ errorCode: 1002, errorMsg: '插件不支持预置点' })
+      })
+    }
+
+    function runIsapi() {
+      if (!WebVideoCtrl.I_SendHTTPRequest) {
+        return trySdkPreset()
+      }
+      if (action === 'set') {
+        return sendHttp(analogBase, setBody).then(
+          function (ok) {
+            return ok
+          },
+          function () {
+            return sendHttp(digitalBase, setBody)
+          },
+        )
+      }
+      // goto：空 body PUT .../goto
+      return sendHttp(analogBase + '/goto', '').then(
+        function (ok) {
+          return ok
+        },
+        function () {
+          return sendHttp(digitalBase + '/goto', '')
+        },
+      )
+    }
+
+    try {
+      runIsapi().then(
+        function () {
+          finishOk()
+        },
+        function (oError) {
+          trySdkPreset().then(finishOk, function (e2) {
+            finishErr(e2 || oError)
+          })
+        },
+      )
+    } catch (e) {
+      finishErr({ errorCode: 1000, errorMsg: (e && e.message) || '预置点异常' })
+    }
+  }
+
   window.addEventListener('message', function (ev) {
     var data = ev.data
     if (!data || data.target !== 'hik-embed') return
@@ -862,6 +1017,8 @@
       handleCapture()
     } else if (data.type === 'hik-ptz') {
       handlePtz(data)
+    } else if (data.type === 'hik-preset') {
+      handlePreset(data)
     } else if (data.type === 'hik-talk-start') {
       handleTalkStart()
     } else if (data.type === 'hik-talk-stop') {
