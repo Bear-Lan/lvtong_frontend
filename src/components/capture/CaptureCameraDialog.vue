@@ -424,117 +424,118 @@ function openPreview() {
             </div>
           </div>
 
-          <!-- 对齐 Qt horizontalLayout_2：云台 | 拍照 | spacer | 确认选择（始终横排） -->
-          <div class="bottom-ctrl">
-            <!-- 用 div 模拟 QGroupBox：fieldset+flex 无法撑满高度 -->
-            <div v-show="showPtz" class="ptz">
-              <div class="ptz-title">360°球机操作云台</div>
-              <div class="ptz-body">
-                <div class="ptz-dirs">
-                  <button
-                    type="button"
-                    class="ptz-btn"
-                    @pointerdown.prevent="onPtzPointerDown($event, 5)"
-                    @pointerup.prevent="onPtzPointerUp($event, 5)"
-                    @pointercancel="onPtzPointerUp($event, 5)"
-                  >
-                    ↖
-                  </button>
-                  <button
-                    type="button"
-                    class="ptz-btn"
-                    @pointerdown.prevent="onPtzPointerDown($event, 1)"
-                    @pointerup.prevent="onPtzPointerUp($event, 1)"
-                    @pointercancel="onPtzPointerUp($event, 1)"
-                  >
-                    ↑
-                  </button>
-                  <button
-                    type="button"
-                    class="ptz-btn"
-                    @pointerdown.prevent="onPtzPointerDown($event, 7)"
-                    @pointerup.prevent="onPtzPointerUp($event, 7)"
-                    @pointercancel="onPtzPointerUp($event, 7)"
-                  >
-                    ↗
-                  </button>
-                  <button
-                    type="button"
-                    class="ptz-btn"
-                    @pointerdown.prevent="onPtzPointerDown($event, 3)"
-                    @pointerup.prevent="onPtzPointerUp($event, 3)"
-                    @pointercancel="onPtzPointerUp($event, 3)"
-                  >
-                    ←
-                  </button>
-                  <button
-                    type="button"
-                    class="ptz-btn"
-                    title="自动巡航"
-                    @click.prevent="ptzStart(9)"
-                  >
-                    ↻
-                  </button>
-                  <button
-                    type="button"
-                    class="ptz-btn"
-                    @pointerdown.prevent="onPtzPointerDown($event, 4)"
-                    @pointerup.prevent="onPtzPointerUp($event, 4)"
-                    @pointercancel="onPtzPointerUp($event, 4)"
-                  >
-                    →
-                  </button>
-                  <button
-                    type="button"
-                    class="ptz-btn"
-                    @pointerdown.prevent="onPtzPointerDown($event, 6)"
-                    @pointerup.prevent="onPtzPointerUp($event, 6)"
-                    @pointercancel="onPtzPointerUp($event, 6)"
-                  >
-                    ↙
-                  </button>
-                  <button
-                    type="button"
-                    class="ptz-btn"
-                    @pointerdown.prevent="onPtzPointerDown($event, 2)"
-                    @pointerup.prevent="onPtzPointerUp($event, 2)"
-                    @pointercancel="onPtzPointerUp($event, 2)"
-                  >
-                    ↓
-                  </button>
-                  <button
-                    type="button"
-                    class="ptz-btn"
-                    @pointerdown.prevent="onPtzPointerDown($event, 8)"
-                    @pointerup.prevent="onPtzPointerUp($event, 8)"
-                    @pointercancel="onPtzPointerUp($event, 8)"
-                  >
-                    ↘
-                  </button>
-                  <button
-                    type="button"
-                    class="ptz-btn"
-                    @pointerdown.prevent="onPtzPointerDown($event, 11)"
-                    @pointerup.prevent="onPtzPointerUp($event, 11)"
-                    @pointercancel="onPtzPointerUp($event, 11)"
-                  >
-                    −
-                  </button>
-                  <span class="ptz-lab">焦距</span>
-                  <button
-                    type="button"
-                    class="ptz-btn"
-                    @pointerdown.prevent="onPtzPointerDown($event, 10)"
-                    @pointerup.prevent="onPtzPointerUp($event, 10)"
-                    @pointercancel="onPtzPointerUp($event, 10)"
-                  >
-                    +
-                  </button>
+          <!-- 上下布局：上排 云台 | 预置位；下排 拍照 | 确认 -->
+          <div class="bottom-ctrl" :class="{ 'has-ptz': showPtz }">
+            <div v-show="showPtz" class="ctrl-top">
+              <div class="ptz">
+                <div class="ptz-title">360°球机操作云台</div>
+                <div class="ptz-body">
+                  <div class="ptz-dirs">
+                    <button
+                      type="button"
+                      class="ptz-btn"
+                      @pointerdown.prevent="onPtzPointerDown($event, 5)"
+                      @pointerup.prevent="onPtzPointerUp($event, 5)"
+                      @pointercancel="onPtzPointerUp($event, 5)"
+                    >
+                      ↖
+                    </button>
+                    <button
+                      type="button"
+                      class="ptz-btn"
+                      @pointerdown.prevent="onPtzPointerDown($event, 1)"
+                      @pointerup.prevent="onPtzPointerUp($event, 1)"
+                      @pointercancel="onPtzPointerUp($event, 1)"
+                    >
+                      ↑
+                    </button>
+                    <button
+                      type="button"
+                      class="ptz-btn"
+                      @pointerdown.prevent="onPtzPointerDown($event, 7)"
+                      @pointerup.prevent="onPtzPointerUp($event, 7)"
+                      @pointercancel="onPtzPointerUp($event, 7)"
+                    >
+                      ↗
+                    </button>
+                    <button
+                      type="button"
+                      class="ptz-btn"
+                      @pointerdown.prevent="onPtzPointerDown($event, 3)"
+                      @pointerup.prevent="onPtzPointerUp($event, 3)"
+                      @pointercancel="onPtzPointerUp($event, 3)"
+                    >
+                      ←
+                    </button>
+                    <button
+                      type="button"
+                      class="ptz-btn"
+                      title="自动巡航"
+                      @click.prevent="ptzStart(9)"
+                    >
+                      ↻
+                    </button>
+                    <button
+                      type="button"
+                      class="ptz-btn"
+                      @pointerdown.prevent="onPtzPointerDown($event, 4)"
+                      @pointerup.prevent="onPtzPointerUp($event, 4)"
+                      @pointercancel="onPtzPointerUp($event, 4)"
+                    >
+                      →
+                    </button>
+                    <button
+                      type="button"
+                      class="ptz-btn"
+                      @pointerdown.prevent="onPtzPointerDown($event, 6)"
+                      @pointerup.prevent="onPtzPointerUp($event, 6)"
+                      @pointercancel="onPtzPointerUp($event, 6)"
+                    >
+                      ↙
+                    </button>
+                    <button
+                      type="button"
+                      class="ptz-btn"
+                      @pointerdown.prevent="onPtzPointerDown($event, 2)"
+                      @pointerup.prevent="onPtzPointerUp($event, 2)"
+                      @pointercancel="onPtzPointerUp($event, 2)"
+                    >
+                      ↓
+                    </button>
+                    <button
+                      type="button"
+                      class="ptz-btn"
+                      @pointerdown.prevent="onPtzPointerDown($event, 8)"
+                      @pointerup.prevent="onPtzPointerUp($event, 8)"
+                      @pointercancel="onPtzPointerUp($event, 8)"
+                    >
+                      ↘
+                    </button>
+                    <button
+                      type="button"
+                      class="ptz-btn"
+                      @pointerdown.prevent="onPtzPointerDown($event, 11)"
+                      @pointerup.prevent="onPtzPointerUp($event, 11)"
+                      @pointercancel="onPtzPointerUp($event, 11)"
+                    >
+                      −
+                    </button>
+                    <button type="button" class="ptz-talk" disabled title="对讲稍后接入">
+                      <img src="/assets/img/a_talkstart.png" alt="对讲" />
+                    </button>
+                    <button
+                      type="button"
+                      class="ptz-btn"
+                      @pointerdown.prevent="onPtzPointerDown($event, 10)"
+                      @pointerup.prevent="onPtzPointerUp($event, 10)"
+                      @pointercancel="onPtzPointerUp($event, 10)"
+                    >
+                      +
+                    </button>
+                  </div>
                 </div>
-                <button type="button" class="ptz-talk" disabled title="对讲稍后接入">
-                  <img src="/assets/img/a_talkstart.png" alt="对讲" />
-                </button>
               </div>
+
               <div class="ptz-presets">
                 <div class="ptz-presets-head">
                   <span class="ptz-presets-lab">预置位</span>
@@ -887,21 +888,35 @@ function openPreview() {
   }
 }
 
-/* 底部：对齐 Qt horizontalLayout_2（云台3 | 拍照2 | spacer | 确认2），始终横排 */
+/* 底部：上排 云台|预置位，下排 拍照|确认 */
 .bottom-ctrl {
   flex: 0 0 auto;
-  margin-top: 10px;
+  margin-top: 18px;
+  padding-top: 6px;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 10px;
+  min-height: 56px;
+
+  &.has-ptz {
+    min-height: 220px;
+  }
+}
+
+.ctrl-top {
+  flex: 1 1 auto;
   display: flex;
   flex-direction: row;
   align-items: stretch;
   gap: 12px;
-  height: 210px;
-  min-height: 210px;
+  min-height: 150px;
+  min-width: 0;
 }
 
 /* 模拟 Qt QGroupBox：内部横纵 1fr 铺满，对称饱满 */
 .ptz {
-  flex: 3 1 0;
+  flex: 1 1 0;
   position: relative;
   margin: 0;
   padding: 16px 10px 10px;
@@ -909,7 +924,6 @@ function openPreview() {
   background: #fafafa;
   box-sizing: border-box;
   min-width: 0;
-  height: 100%;
   display: flex;
   flex-direction: column;
 }
@@ -929,15 +943,12 @@ function openPreview() {
 .ptz-body {
   flex: 1 1 auto;
   display: flex;
-  flex-direction: row;
-  align-items: stretch;
-  gap: 10px;
   width: 100%;
   min-height: 0;
   box-sizing: border-box;
 }
 
-/* 3×4 等分铺满左侧区域 */
+/* 3×4 等分铺满 */
 .ptz-dirs {
   flex: 1 1 auto;
   display: grid;
@@ -977,24 +988,14 @@ function openPreview() {
   }
 }
 
-.ptz-lab {
-  display: flex;
-  align-items: center;
-  justify-content: center;
+/* 对讲图标：落在原「焦距」格 */
+.ptz-talk {
   width: 100%;
   height: 100%;
-  font-size: 13px;
-  color: #333;
-  box-sizing: border-box;
-}
-
-/* 麦克风：占右侧一列，垂直居中于整高 */
-.ptz-talk {
-  flex: 0 0 22%;
-  max-width: 72px;
-  min-width: 52px;
-  height: 100%;
-  border: none;
+  min-width: 0;
+  min-height: 0;
+  border: 1px solid transparent;
+  border-radius: 10px;
   background: transparent;
   cursor: pointer;
   padding: 0;
@@ -1009,20 +1010,26 @@ function openPreview() {
   }
 
   img {
-    width: 70%;
-    max-width: 52px;
+    width: 55%;
+    max-width: 36px;
     height: auto;
     aspect-ratio: 1;
     object-fit: contain;
-    /* 深灰近黑，提高对比 */
     filter: brightness(0) invert(18%);
   }
 }
 
 .ptz-presets {
-  margin-top: 6px;
-  width: 100%;
-  flex: 0 0 auto;
+  flex: 1 1 0;
+  min-width: 0;
+  margin: 0;
+  padding: 10px;
+  border: 1px solid #c8c8c8;
+  background: #fafafa;
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
 }
 
 .ptz-presets-head {
@@ -1030,7 +1037,7 @@ function openPreview() {
   align-items: center;
   justify-content: space-between;
   gap: 8px;
-  margin-bottom: 4px;
+  flex: 0 0 auto;
 }
 
 .ptz-presets-lab {
@@ -1064,18 +1071,23 @@ function openPreview() {
 }
 
 .ptz-presets-grid {
+  flex: 1 1 auto;
   display: grid;
-  grid-template-columns: repeat(9, minmax(0, 1fr));
-  gap: 3px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-rows: repeat(3, minmax(0, 1fr));
+  gap: 6px;
+  min-height: 0;
 }
 
 .ptz-preset-btn {
-  height: 26px;
+  width: 100%;
+  height: 100%;
+  min-height: 28px;
   border: 1px solid #cbd5e1;
-  border-radius: 4px;
+  border-radius: 6px;
   background: #f8fafc;
   color: #334155;
-  font-size: 12px;
+  font-size: 14px;
   font-weight: 700;
   cursor: pointer;
   padding: 0;
@@ -1099,7 +1111,7 @@ function openPreview() {
 }
 
 .ptz-preset-hint {
-  margin-top: 3px;
+  flex: 0 0 auto;
   font-size: 11px;
   color: #64748b;
   line-height: 1.3;
@@ -1107,13 +1119,13 @@ function openPreview() {
 }
 
 .actions {
-  flex: 4 1 0;
+  flex: 0 0 auto;
   display: flex;
   flex-direction: row;
   align-items: center;
   gap: 12px;
   min-width: 0;
-  height: 100%;
+  height: 48px;
 }
 
 .btn-shot,
