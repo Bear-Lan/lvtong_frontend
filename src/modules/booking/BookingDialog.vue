@@ -41,6 +41,7 @@ const {
   requestConfirm,
   cancelConfirm,
   confirmYes,
+  initDialog,
 } = useBookingDialog()
 
 // ---- 画面：MediaMTX WHEP（cam_booking → /mtx/cam4）----
@@ -79,12 +80,13 @@ async function startBookingVideo() {
   }
 }
 
-// ---- 对讲：插件只对讲（屏外 RealPlay + autoTalk）----
+// ---- 对讲：播报完成后再自动开对讲，播报中必须关闭 ----
 const hikTalkAnchorRef = ref<HTMLElement | null>(null)
 const {
   status: talkStatus,
   statusText: talkStatusText,
   talking,
+  talkBusy,
   iframeRef,
   iframeSrc,
   start: startHik,
@@ -92,9 +94,15 @@ const {
   onIframeLoad,
   hidePluginOverlay,
   toggleTalk,
+  stopTalk,
 } = useHikvisionPlayer(hikTalkAnchorRef)
 
+/** 后端 /booking/open 阻塞播 step2 期间 */
+const announcePlaying = ref(true)
+
 const talkHint = computed(() => {
+  if (announcePlaying.value) return '语音播报中，稍后自动开对讲…'
+  if (talkBusy.value) return talking.value ? '对讲连接中…' : '正在停止对讲…'
   if (talking.value) return '对讲中'
   if (talkStatus.value === 'error') return talkStatusText.value || '对讲失败'
   if (talkStatus.value === 'loading') return '对讲连接中…'
@@ -102,7 +110,10 @@ const talkHint = computed(() => {
   return ''
 })
 const canToggleTalk = computed(
-  () => talkStatus.value === 'playing' || talking.value,
+  () =>
+    !announcePlaying.value &&
+    !talkBusy.value &&
+    (talkStatus.value === 'playing' || talking.value),
 )
 
 /** 左侧雷达图是否已在浏览器解码完成 */
@@ -116,16 +127,25 @@ const talkReady = computed(() => talkStatus.value === 'playing' || talking.value
 const radarReady = computed(
   () => !!radarImageUrl.value && radarImageReady.value && !loading.value,
 )
-/** 受理：对讲 + 视频 + 左侧图都就绪 */
+/** 受理：视频 + 左侧图就绪（播报完成后即可，不强制对讲已开） */
 const canAccept = computed(
-  () => videoReady.value && talkReady.value && radarReady.value && !submitting.value,
+  () =>
+    !announcePlaying.value &&
+    videoReady.value &&
+    radarReady.value &&
+    !submitting.value,
 )
 /** 驳回：拉图失败或非加载中即可驳回（避免雷达超时把界面卡死） */
 const canReject = computed(
-  () => !submitting.value && !loading.value && (radarReady.value || radarFetchFailed.value),
+  () =>
+    !announcePlaying.value &&
+    !submitting.value &&
+    !loading.value &&
+    (radarReady.value || radarFetchFailed.value),
 )
 const decideHint = computed(() => {
   if (submitting.value) return ''
+  if (announcePlaying.value) return '正在语音播报「申请已接收…」，播完后自动开启对讲'
   if (loading.value) return '正在拉取雷达图（失败会自动重试），请稍候…'
   if (canAccept.value) return ''
   if (radarFetchFailed.value && !radarReady.value) {
@@ -134,7 +154,6 @@ const decideHint = computed(() => {
   const missing: string[] = []
   if (!radarReady.value) missing.push('左侧图')
   if (!videoReady.value) missing.push('视频')
-  if (!talkReady.value) missing.push('对讲')
   if (!missing.length) return ''
   return `请等待${missing.join('、')}加载完成后再受理`
 })
@@ -174,7 +193,7 @@ async function handleConfirmYes() {
 }
 
 function onOverlayClick() {
-  if (submitting.value || loading.value) return
+  if (submitting.value || loading.value || announcePlaying.value) return
   requestConfirm('close')
 }
 
@@ -195,8 +214,23 @@ watch(confirmVisible, (visible) => {
 onMounted(async () => {
   await nextTick()
   await new Promise<void>((r) => requestAnimationFrame(() => r()))
+  // 1) WHEP 画面可先开（不占 TwoWayAudio）
   void startBookingVideo()
+  try {
+    stopTalk()
+  } catch {
+    /* ignore */
+  }
+  // 2) 播报期间预热海康插件；autoTalk 会等通道锁，播完立刻开讲
   startHik(TALK_CAMERA_DEVICE_ID, { autoTalk: true, talkOnly: true })
+  announcePlaying.value = true
+  try {
+    await initDialog({ fetchRadar: false })
+  } finally {
+    announcePlaying.value = false
+  }
+  // 3) 雷达图与对讲并行，不挡开讲
+  void refreshRadarImage({ maxRetries: 2 })
 })
 
 onBeforeUnmount(() => {

@@ -1,7 +1,7 @@
 /**
  * 预约弹窗控制器 — 对齐 OrderDialog 槽函数与局部状态
  */
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { DEFAULT_HEAD_WIDTH, getBookingApi } from '../api/bookingApi'
 import { useBookingStore } from '../store/useBookingStore'
 import type { BookingAcceptPayload, BookingConfirmConfig, VehicleSizeType } from '../types'
@@ -163,8 +163,8 @@ export function useBookingDialog() {
     }
   }
 
-  /** 对齐 onRefreshOrderDialog */
-  async function initDialog() {
+  /** 对齐 onRefreshOrderDialog；open 会阻塞播报 step2（约数秒） */
+  async function initDialog(opts?: { fetchRadar?: boolean }) {
     xrayEnabled.value = true
     radarImageUrl.value = null
     linePosition.value = 0.5
@@ -188,6 +188,9 @@ export function useBookingDialog() {
       console.warn('[BookingDialog] openDialog 失败:', e)
     }
 
+    if (opts?.fetchRadar === false) {
+      return
+    }
     await refreshRadarImage({ maxRetries: 2 })
   }
 
@@ -254,10 +257,6 @@ export function useBookingDialog() {
     }
   }
 
-  onMounted(() => {
-    initDialog()
-  })
-
   return {
     loading,
     submitting,
@@ -283,6 +282,7 @@ export function useBookingDialog() {
     cancelConfirm,
     buildAcceptPayload,
     confirmYes,
+    initDialog,
     api,
   }
 }

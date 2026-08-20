@@ -16,6 +16,7 @@ const {
   status: videoStatus,
   statusText: videoStatusText,
   talking,
+  talkBusy,
   iframeRef,
   iframeSrc,
   start: startHik,
@@ -32,7 +33,9 @@ const videoHint = computed(() => {
 })
 const showVideoHint = computed(() => videoStatus.value !== 'playing')
 
-const canToggleTalk = computed(() => videoStatus.value === 'playing')
+const canToggleTalk = computed(
+  () => videoStatus.value === 'playing' && !talkBusy.value,
+)
 
 async function onClose() {
   hidePluginOverlay()

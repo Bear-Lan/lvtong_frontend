@@ -14,6 +14,9 @@ import { request } from '@/api/request'
 /** 默认车头宽度（米）— 对齐 config radar.headDefaultWidth */
 export const DEFAULT_HEAD_WIDTH = 1.5
 
+/** 并发 open 合并为同一请求，避免多次抢 TwoWayAudio */
+let sharedOpenPromise: Promise<BookingOpenResult> | null = null
+
 /** 真实 HTTP 实现 */
 export function createHttpBookingApi(): BookingPort {
   return {
@@ -34,17 +37,31 @@ export function createHttpBookingApi(): BookingPort {
 
     async openDialog() {
       // 对齐 onRefreshOrderDialog：设备侧效应由后端执行
-      const res = await request<BookingOpenResult>('/booking/open', { method: 'POST' })
-      if (res.code === 0 && res.data) {
-        return res.data
+      // 合并并发 open，防止弹窗重复挂载时多次播报/抢通道
+      if (!sharedOpenPromise) {
+        sharedOpenPromise = (async () => {
+          try {
+            const res = await request<BookingOpenResult>('/booking/open', {
+              method: 'POST',
+              // open 内阻塞播报 step2，超时放宽
+              timeout: 90000,
+            })
+            if (res.code === 0 && res.data) {
+              return res.data
+            }
+            // 兼容旧后端仅有 /state
+            const stateRes = await request<BookingProcessState>('/booking/state')
+            return {
+              videoStreamUrl: null,
+              devicesReady: false,
+              state: stateRes.code === 0 ? stateRes.data ?? undefined : undefined,
+            }
+          } finally {
+            sharedOpenPromise = null
+          }
+        })()
       }
-      // 兼容旧后端仅有 /state
-      const stateRes = await request<BookingProcessState>('/booking/state')
-      return {
-        videoStreamUrl: null,
-        devicesReady: false,
-        state: stateRes.code === 0 ? stateRes.data ?? undefined : undefined,
-      }
+      return sharedOpenPromise
     },
 
     async stopVideoSession() {

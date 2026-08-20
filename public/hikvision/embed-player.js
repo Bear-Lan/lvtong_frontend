@@ -8,6 +8,9 @@
   var g_playing = false
   var g_talking = false
   var g_busy = false
+  /** 对讲最终意图：true=开 / false=关 / null=无待办（串行泵） */
+  var g_talkWant = null
+  var g_talkPumping = false
   var g_layout = null
   var g_layoutWaiters = []
   var g_analogInfoReady = false
@@ -399,9 +402,10 @@
       }
       var ch = g_audioChannel || 1
       var uri = 'ISAPI/System/TwoWayAudio/channels/' + ch + '/close'
+      // 硬超时缩短：正常应很快返回；挂死时别卡死开讲
       setTimeout(function () {
         done(null)
-      }, 1500)
+      }, 400)
       try {
         WebVideoCtrl.I_SendHTTPRequest(g_deviceIdentify, uri, {
           type: 'PUT',
@@ -445,23 +449,27 @@
         reject(new Error('请先预览成功再对讲'))
         return
       }
-      if (g_audioChannel == null || isNaN(g_audioChannel)) {
-        reject(new Error('对讲通道无效'))
-        return
+
+      var chain = Promise.resolve()
+      if (g_talking) {
+        chain = chain
+          .then(function () {
+            return stopVoiceTalk()
+          })
+          .then(function () {
+            return forceCloseTalkChannel()
+          })
       }
-      stopVoiceTalk()
+
+      // 海康要求：开对讲前先关预览声音，否则易 [1000]
+      chain
         .then(function () {
           return closeAllSound()
         })
         .then(function () {
-          return forceCloseTalkChannel()
-        })
-        .then(function () {
-          return new Promise(function (r) {
-            setTimeout(r, 300)
-          })
-        })
-        .then(function () {
+          if (g_audioChannel != null && !isNaN(g_audioChannel)) {
+            return g_audioChannel
+          }
           return getAudioInfo()
         })
         .then(function (ch) {
@@ -478,13 +486,45 @@
           },
           function (oError) {
             g_talking = false
-            forceCloseTalkChannel()
+            // 点太快/通道未释放时重试一次
+            closeAllSound()
               .then(function () {
                 return stopVoiceTalk()
               })
               .then(function () {
-                reject(new Error(formatTalkErr(oError, '开始对讲失败')))
+                return forceCloseTalkChannel()
               })
+              .then(function () {
+                return new Promise(function (r) {
+                  setTimeout(r, 200)
+                })
+              })
+              .then(function () {
+                var ch = g_audioChannel || 1
+                post({
+                  type: 'hik-log',
+                  text: 'I_StartVoiceTalk retry ch=' + ch,
+                })
+                return WebVideoCtrl.I_StartVoiceTalk(g_deviceIdentify, ch)
+              })
+              .then(
+                function () {
+                  g_talking = true
+                  resolve()
+                },
+                function (oError2) {
+                  g_talking = false
+                  forceCloseTalkChannel()
+                    .then(function () {
+                      return stopVoiceTalk()
+                    })
+                    .then(function () {
+                      reject(
+                        new Error(formatTalkErr(oError2 || oError, '开始对讲失败')),
+                      )
+                    })
+                },
+              )
           },
         )
     })
@@ -640,26 +680,61 @@
   }
 
   async function handleTalkStart() {
-    try {
-      await startVoiceTalk()
-      status('对讲中', 'playing')
-      post({ type: 'hik-talk', talking: true })
-    } catch (e) {
-      status((e && e.message) || '对讲失败', 'error')
-      post({
-        type: 'hik-talk',
-        talking: false,
-        error: (e && e.message) || '对讲失败',
-      })
-    }
+    g_talkWant = true
+    post({ type: 'hik-talk', talking: true, pending: true })
+    pumpTalkWant()
   }
 
   async function handleTalkStop() {
-    try {
-      await stopVoiceTalk()
-    } catch (e) {}
-    status(g_playing ? '预览成功，可对讲' : '已停止对讲', 'playing')
-    post({ type: 'hik-talk', talking: false })
+    g_talkWant = false
+    post({ type: 'hik-talk', talking: false, pending: true })
+    pumpTalkWant()
+  }
+
+  /** 串行开/关：点快了只记最终意图，避免 Start/Stop 叠在一起报 [1000] */
+  function pumpTalkWant() {
+    if (g_talkPumping) return
+    g_talkPumping = true
+    ;(function run() {
+      if (g_talkWant === null) {
+        g_talkPumping = false
+        return
+      }
+      var want = g_talkWant
+      g_talkWant = null
+      var op = Promise.resolve()
+      if (want && !g_talking) {
+        op = startVoiceTalk().then(
+          function () {
+            status('对讲中', 'playing')
+            post({ type: 'hik-talk', talking: true })
+          },
+          function (e) {
+            status((e && e.message) || '对讲失败', 'error')
+            post({
+              type: 'hik-talk',
+              talking: false,
+              error: (e && e.message) || '对讲失败',
+            })
+          },
+        )
+      } else if (!want && g_talking) {
+        op = stopVoiceTalk().then(
+          function () {
+            status(g_playing ? '预览成功，可对讲' : '已停止对讲', 'playing')
+            post({ type: 'hik-talk', talking: false })
+          },
+          function () {
+            status(g_playing ? '预览成功，可对讲' : '已停止对讲', 'playing')
+            post({ type: 'hik-talk', talking: false })
+          },
+        )
+      } else {
+        // 已是目标状态
+        post({ type: 'hik-talk', talking: !!g_talking })
+      }
+      op.then(run, run)
+    })()
   }
 
   async function handleCapture() {

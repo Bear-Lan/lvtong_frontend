@@ -15,6 +15,21 @@ export interface DevicePreviewConfig {
   zeroChannel: boolean
 }
 
+/** 预约机双工通道占用状态 */
+export interface VoiceChannelStatus {
+  busy: boolean
+  owner: 'announce' | 'talk' | null
+  token?: string | null
+  heldMs?: number
+  since?: number | null
+  ok?: boolean
+  error?: string
+  reentrant?: boolean
+  stolenFrom?: string
+  released?: string
+  idle?: boolean
+}
+
 /**
  * 读取摄像头 Web 预览配置
  * GET /api/device/<deviceId>/preview-config
@@ -23,4 +38,38 @@ export function getDevicePreviewConfigApi(deviceId: string) {
   return request<DevicePreviewConfig>(
     `/device/${encodeURIComponent(deviceId)}/preview-config`,
   )
+}
+
+/** POST /api/device/voice/acquire — 开对讲前必须拿到锁 */
+export function acquireVoiceChannelApi(opts?: {
+  owner?: 'talk' | 'announce'
+  wait?: boolean
+  timeout?: number
+}) {
+  return request<VoiceChannelStatus>('/device/voice/acquire', {
+    method: 'POST',
+    body: JSON.stringify({
+      owner: opts?.owner ?? 'talk',
+      wait: opts?.wait ?? true,
+      timeout: opts?.timeout ?? 45,
+    }),
+    // 可能阻塞等待播报结束
+    timeout: Math.max(60000, ((opts?.timeout ?? 45) + 5) * 1000),
+  })
+}
+
+/** POST /api/device/voice/release — 关对讲后释放 */
+export function releaseVoiceChannelApi(opts?: {
+  owner?: 'talk' | 'announce'
+  token?: string | null
+  force?: boolean
+}) {
+  return request<VoiceChannelStatus>('/device/voice/release', {
+    method: 'POST',
+    body: JSON.stringify({
+      owner: opts?.owner ?? 'talk',
+      token: opts?.token ?? undefined,
+      force: opts?.force ?? false,
+    }),
+  })
 }

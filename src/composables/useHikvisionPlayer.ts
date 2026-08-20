@@ -1,5 +1,10 @@
 import { onMounted, onUnmounted, ref, shallowRef, type Ref } from 'vue'
-import { getDevicePreviewConfigApi, type DevicePreviewConfig } from '@/api/device'
+import {
+  acquireVoiceChannelApi,
+  getDevicePreviewConfigApi,
+  releaseVoiceChannelApi,
+  type DevicePreviewConfig,
+} from '@/api/device'
 import { DEFAULT_GUN_DEVICE_ID } from '@/config/hikvision'
 
 export type HikPlayerStatus = 'idle' | 'loading' | 'ready' | 'playing' | 'error'
@@ -46,6 +51,7 @@ export function useHikvisionPlayer(anchorRef: Ref<HTMLElement | null>) {
   /** 当前预览对应的 devices.device_id */
   const currentDeviceId = ref(DEFAULT_GUN_DEVICE_ID)
   const talking = ref(false)
+  const talkBusy = ref(false)
   const audioChannel = ref<number | null>(null)
 
   let pendingDeviceId = DEFAULT_GUN_DEVICE_ID
@@ -62,6 +68,9 @@ export function useHikvisionPlayer(anchorRef: Ref<HTMLElement | null>) {
     (r: { ok: boolean; action: 'set' | 'goto'; id: number; message?: string }) => void
   > = []
   let ptzAutoOn = false
+  /** 后端双工通道锁 token（对讲占用） */
+  let voiceLockToken: string | null = null
+  let voiceLockAcquiring = false
 
   const OFFSCREEN_LAYOUT: HikLayoutRect = {
     left: -10000,
@@ -111,18 +120,73 @@ export function useHikvisionPlayer(anchorRef: Ref<HTMLElement | null>) {
     postToIframe({ type: 'hik-layout', rect: lastSentLayout, force: true })
   }
 
-  function startTalk() {
+  async function acquireTalkLock(): Promise<boolean> {
+    if (voiceLockToken) return true
+    if (voiceLockAcquiring) return false
+    voiceLockAcquiring = true
+    statusText.value = '等待语音通道…'
+    try {
+      const res = await acquireVoiceChannelApi({
+        owner: 'talk',
+        wait: true,
+        timeout: 45,
+      })
+      if (res.code === 0 && res.data?.token) {
+        voiceLockToken = res.data.token
+        return true
+      }
+      statusText.value = res.message || '语音通道忙，无法对讲'
+      return false
+    } catch (e) {
+      statusText.value = e instanceof Error ? e.message : '语音通道申请失败'
+      return false
+    } finally {
+      voiceLockAcquiring = false
+    }
+  }
+
+  async function releaseTalkLock() {
+    const token = voiceLockToken
+    voiceLockToken = null
+    if (!token) return
+    try {
+      await releaseVoiceChannelApi({ owner: 'talk', token })
+    } catch {
+      /* 关弹窗时尽力释放，忽略网络错误 */
+    }
+  }
+
+  async function startTalk() {
     if (status.value !== 'playing') return
+    if (talkBusy.value || talking.value) return
+    talkBusy.value = true
+    talking.value = true
+    statusText.value = '对讲连接中…'
+    const got = await acquireTalkLock()
+    if (!got) {
+      talking.value = false
+      talkBusy.value = false
+      return
+    }
     postToIframe({ type: 'hik-talk-start' })
   }
 
   function stopTalk() {
+    talking.value = false
+    talkBusy.value = true
+    statusText.value = '正在停止对讲…'
+    // 锁等插件确认关闭后再释放，避免开讲未完成时被抢通道
     postToIframe({ type: 'hik-talk-stop' })
   }
 
   function toggleTalk() {
+    // 连接中再点：改为停止；已对讲则停止；空闲则开始
+    if (talkBusy.value) {
+      if (talking.value) stopTalk()
+      return
+    }
     if (talking.value) stopTalk()
-    else startTalk()
+    else void startTalk()
   }
 
   function onMessage(ev: MessageEvent) {
@@ -152,7 +216,7 @@ export function useHikvisionPlayer(anchorRef: Ref<HTMLElement | null>) {
       window.setTimeout(() => postLayout(true), 150)
       if (autoTalkAfterPlay) {
         autoTalkAfterPlay = false
-        window.setTimeout(() => startTalk(), 200)
+        void startTalk()
       }
       return
     }
@@ -161,12 +225,16 @@ export function useHikvisionPlayer(anchorRef: Ref<HTMLElement | null>) {
       status.value = 'error'
       statusText.value = String(data.message || '摄像头启动失败')
       talking.value = false
+      talkBusy.value = false
+      void releaseTalkLock()
       return
     }
 
     if (data.type === 'hik-stopped') {
       talking.value = false
+      talkBusy.value = false
       audioChannel.value = null
+      void releaseTalkLock()
       const waiters = stopWaiters
       stopWaiters = []
       waiters.forEach((fn) => fn())
@@ -175,9 +243,17 @@ export function useHikvisionPlayer(anchorRef: Ref<HTMLElement | null>) {
 
     if (data.type === 'hik-talk') {
       talking.value = !!data.talking
+      if (!data.pending) {
+        talkBusy.value = false
+      }
+      if (!data.talking && !data.pending) {
+        void releaseTalkLock()
+      }
       if (data.error) {
         statusText.value = String(data.error)
-      } else {
+        talkBusy.value = false
+        void releaseTalkLock()
+      } else if (!data.pending) {
         statusText.value = talking.value ? '对讲中' : '预览成功，可对讲'
       }
       const waiters = talkWaiters
@@ -280,6 +356,7 @@ export function useHikvisionPlayer(anchorRef: Ref<HTMLElement | null>) {
     talkOnlyMode = !!opts?.talkOnly
     lastSentLayout = null
     talking.value = false
+    talkBusy.value = false
     audioChannel.value = null
     iframeSrc.value = `${PLAYER_URL}?t=${Date.now()}`
   }
@@ -294,6 +371,8 @@ export function useHikvisionPlayer(anchorRef: Ref<HTMLElement | null>) {
       autoTalkAfterPlay = false
       talkOnlyMode = false
       talking.value = false
+      talkBusy.value = false
+      void releaseTalkLock()
       if (!iframeRef.value || !iframeSrc.value) {
         status.value = 'idle'
         statusText.value = '实时摄像头画面区域'
@@ -423,6 +502,7 @@ export function useHikvisionPlayer(anchorRef: Ref<HTMLElement | null>) {
     iframeSrc,
     currentDeviceId,
     talking,
+    talkBusy,
     audioChannel,
     start,
     stop,
