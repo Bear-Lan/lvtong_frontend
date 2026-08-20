@@ -136,6 +136,17 @@ function onSysMenuDocClick() {
 }
 
 onMounted(() => {
+  // 先回放缓存，再订阅读取；DEVICE 相同寄存器只推一次，晚开面板会全灰
+  if (wsStore.lastPlcStatus) {
+    applyStatus(wsStore.lastPlcStatus)
+  }
+  void request<Record<string, unknown> | null>('/device/plc-status')
+    .then((res) => {
+      if (res.data && typeof res.data === 'object') applyStatus(res.data)
+    })
+    .catch(() => {
+      /* 无缓存时忽略 */
+    })
   wsStore.subscribe('plc_status', onWsPlcStatus)
   document.addEventListener('click', onSysMenuDocClick)
 })

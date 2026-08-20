@@ -15,6 +15,8 @@ export const useWsStore = defineStore('websocket', () => {
   const status = ref<WsConnectionStatus>('idle')
   const lastMessage = ref<WsEnvelope | null>(null)
   const lastError = ref<string | null>(null)
+  /** 最近一次 plc_status（面板晚开时回放） */
+  const lastPlcStatus = ref<Record<string, unknown> | null>(null)
 
   const isConnected = computed(() => status.value === 'open')
 
@@ -30,6 +32,13 @@ export const useWsStore = defineStore('websocket', () => {
       },
       onMessage: (payload) => {
         lastMessage.value = payload
+        if (
+          payload?.type === 'plc_status' &&
+          payload.data &&
+          typeof payload.data === 'object'
+        ) {
+          lastPlcStatus.value = payload.data as Record<string, unknown>
+        }
       },
       onError: () => {
         lastError.value = 'WebSocket 连接异常'
@@ -68,6 +77,7 @@ export const useWsStore = defineStore('websocket', () => {
   return {
     status,
     lastMessage,
+    lastPlcStatus,
     lastError,
     isConnected,
     connect,
