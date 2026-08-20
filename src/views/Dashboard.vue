@@ -999,6 +999,9 @@ watch(
 
 const licensePaths = ref({ license: '', licenseGc: '', licenseStitched: '' })
 
+/** OCR 出口称重提示区间，如 "(7920-18900)"；空则不显示 */
+const weightRangeHint = ref('')
+
 /** AI 行驶证裁剪（静默）：主行驶证到位后自动调用；可带挂车证一起裁 */
 const aiLicenseCropBusy = ref(false)
 let aiLicenseCropSeq = 0
@@ -1010,6 +1013,67 @@ async function srcToFileForAi(src: string, filename: string): Promise<File> {
   if (!res.ok) throw new Error(`读取图片失败: ${res.status}`)
   const blob = await res.blob()
   return new File([blob], filename, { type: blob.type || 'image/jpeg' })
+}
+
+/** 行驶证 OCR：填车牌（仅空时）+ 出口称重区间提示 */
+async function runLicenseOcrSilent(imageSrc: string) {
+  if (!imageSrc) return
+  try {
+    const fd = new FormData()
+    fd.append('image', await srcToFileForAi(imageSrc, 'license_ocr.jpg'))
+    const token =
+      localStorage.getItem('lvtong_token') || sessionStorage.getItem('lvtong_token')
+    const headers: Record<string, string> = {}
+    if (token) headers.Authorization = `Bearer ${token}`
+
+    const controller = new AbortController()
+    const timer = setTimeout(() => controller.abort(), 60000)
+    let res: Response
+    try {
+      res = await fetch(`${appConfig.apiBaseUrl}/imaging/ocr/driving-license`, {
+        method: 'POST',
+        headers,
+        body: fd,
+        signal: controller.signal,
+      })
+    } finally {
+      clearTimeout(timer)
+    }
+
+    const json = (await res.json()) as {
+      code: number
+      message?: string
+      data?: {
+        plate_number?: string
+        hdzzl?: string
+        zzl?: string
+        weight_min?: number
+        weight_max?: number
+        weight_range_text?: string
+      }
+    }
+    if (!res.ok || json.code !== 0 || !json.data) {
+      console.warn('[OCR行驶证]', json.message || `HTTP ${res.status}`)
+      return
+    }
+    const d = json.data
+    const plate = String(d.plate_number || '').trim()
+    if (plate && !isUsablePlate(form.value.plate)) {
+      form.value.plate = plate
+      void applyPlateHistory(plate)
+      console.info('[OCR行驶证] 已填车牌', plate)
+    }
+    if (d.weight_min && d.weight_max) {
+      weightRangeHint.value = `(${d.weight_min}-${d.weight_max})`
+    } else if (d.weight_range_text) {
+      weightRangeHint.value = d.weight_range_text
+    }
+    console.info(
+      `[OCR行驶证] hdzzl=${d.hdzzl ?? '-'} zzl=${d.zzl ?? '-'} range=${weightRangeHint.value || '-'}`,
+    )
+  } catch (e) {
+    console.warn('[OCR行驶证]', e instanceof Error ? e.message : e)
+  }
 }
 
 async function runAiLicenseCropSilent(mainSrc: string, hangSrc: string) {
@@ -1080,6 +1144,10 @@ async function runAiLicenseCropSilent(mainSrc: string, hangSrc: string) {
     // 成功后记 key，避免对裁剪结果再次触发
     aiLicenseCropLastKey = `${licensePaths.value.license}||${licensePaths.value.licenseGc}`
     console.info('[AI行驶证裁剪] 静默完成', d.mode || '')
+    // 裁剪完成后 OCR：优先主证裁剪图（含正反面信息更完整时也可用拼接图）
+    void runLicenseOcrSilent(
+      licensePaths.value.licenseStitched || licensePaths.value.license,
+    )
   } catch (e) {
     if (seq !== aiLicenseCropSeq) return
     // 失败不记 lastKey，允许下次重试
@@ -1290,6 +1358,8 @@ function doReset() {
   captureThumbs.value = {}
   captureLists.value = { goods: [], evidence: [] }
   licensePaths.value = { license: '', licenseGc: '', licenseStitched: '' }
+  weightRangeHint.value = ''
+  aiLicenseCropLastKey = ''
   bodyImageUrls.value = { body: '', top: '', side: '' }
   xrayImageUrls.value = { '200': '', '160': '', mosaic: '' }
   liveCropPreviewUrl.value = ''
@@ -2284,7 +2354,7 @@ const anyDialogOpen = computed(
             </div>
 
             <div class="form-row">
-              <label>出口称重(kg)：</label>
+              <label>出口称重(kg)<span v-if="weightRangeHint" class="weight-hint">{{ weightRangeHint }}</span>：</label>
               <input v-model="form.weight" class="field-input" placeholder="出口称重（kg）" />
               <span class="col-gap" />
               <label class="col-right">查验次数：</label>
@@ -2932,6 +3002,14 @@ const anyDialogOpen = computed(
   background: transparent;
   outline: none;
   &:focus { border-bottom-color: $accept-green; background: #f0fdf4; }
+}
+
+.weight-hint {
+  margin-left: 2px;
+  color: #64748b;
+  font-weight: 500;
+  font-size: 12px;
+  white-space: nowrap;
 }
 
 .field-value {
