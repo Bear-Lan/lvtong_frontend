@@ -1,130 +1,94 @@
 <script setup lang="ts">
-
+import { computed } from 'vue'
 import { SEGMENT_PIX, START_POS_X, SCENE_WIDTH } from '@/constants/workflowLayout'
-
-
 
 export type WorkflowStepKey = 'book' | 'gate' | 'xray' | 'camera' | 'audit'
 
-
-
 interface WorkflowItem {
-
   key: WorkflowStepKey
-
   label: string
-
   icon: string
-
   wide?: boolean
-
+  title?: string
 }
 
-
-
 const props = withDefaults(
-
   defineProps<{
-
     bookingActive?: boolean
-
+    /** 栏杆在线 — 对齐 GateUIController */
+    gateOnline?: boolean
+    /** 栏杆抬起 */
+    gateOpen?: boolean
   }>(),
-
   {
-
     bookingActive: false,
-
+    gateOnline: false,
+    gateOpen: false,
   },
-
 )
 
-
-
 const emit = defineEmits<{
-
   click: [key: WorkflowStepKey]
-
 }>()
 
+const gateIcon = computed(() => {
+  if (!props.gateOnline) return '/assets/img/a_zj.png'
+  return props.gateOpen
+    ? '/assets/img/a_zj_online_up.png'
+    : '/assets/img/a_zj_online.png'
+})
 
+const gateTitle = computed(() => {
+  if (!props.gateOnline) return '栏杆机未连接'
+  return props.gateOpen
+    ? '栏杆机状态：开启\n点击切换开关状态'
+    : '栏杆机状态：关闭\n点击切换开关状态'
+})
 
-const items: WorkflowItem[] = [
-
+const items = computed<WorkflowItem[]>(() => [
   { key: 'book', label: '预约', icon: '/assets/img/a_lc_online.png', wide: true },
-
-  { key: 'gate', label: '闸机', icon: '/assets/img/a_zj.png', wide: true },
-
+  {
+    key: 'gate',
+    label: '闸机',
+    icon: gateIcon.value,
+    wide: true,
+    title: gateTitle.value,
+  },
   { key: 'xray', label: '光机', icon: '/assets/img/xray_online.png' },
-
   { key: 'camera', label: '拍照', icon: '/assets/img/a_xj_offline.png' },
-
   { key: 'audit', label: '审核', icon: '/assets/img/a_sh.png' },
-
-]
-
-
+])
 
 const leadSpacerPct = `${(START_POS_X / SCENE_WIDTH) * 100}%`
-
 const cellWidthPct = `${(SEGMENT_PIX / SCENE_WIDTH) * 100}%`
-
 </script>
 
-
-
 <template>
-
   <div class="workflow-icons">
-
     <div class="workflow-row">
-
       <div class="lead-spacer" :style="{ width: leadSpacerPct }" />
-
       <button
-
         v-for="item in items"
-
         :key="item.key"
-
         type="button"
-
         class="wf-btn"
-
         :style="{ width: cellWidthPct }"
-
-        :title="item.label"
-
+        :title="item.title || item.label"
         @click="emit('click', item.key)"
-
       >
-
         <img
-
           :src="item.icon"
-
           :alt="item.label"
-
           class="wf-icon"
-
           :class="{ wide: item.wide }"
-
         />
-
         <span class="wf-label" :class="{ active: item.key === 'book' && bookingActive }">
-
           {{ item.label }}
-
         </span>
-
       </button>
-
     </div>
-
   </div>
-
 </template>
-
-
 
 <style scoped lang="scss">
 /* 吃满虚线以上空间，图标等比放大后垂直居中 */
@@ -186,5 +150,3 @@ const cellWidthPct = `${(SEGMENT_PIX / SCENE_WIDTH) * 100}%`
   }
 }
 </style>
-
-

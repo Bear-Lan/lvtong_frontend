@@ -14,6 +14,10 @@ defineProps<{
 
   distance?: number
 
+  gateOnline?: boolean
+
+  gateOpen?: boolean
+
 }>()
 
 
@@ -36,7 +40,12 @@ const emit = defineEmits<{
 
   <div class="left-bottom">
 
-    <WorkflowIcons :booking-active="bookingActive" @click="emit('workflowClick', $event)" />
+    <WorkflowIcons
+      :booking-active="bookingActive"
+      :gate-online="gateOnline"
+      :gate-open="gateOpen"
+      @click="emit('workflowClick', $event)"
+    />
 
     <TruckScene :distance="distance" />
 

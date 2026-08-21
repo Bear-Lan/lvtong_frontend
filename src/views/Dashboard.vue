@@ -4,6 +4,7 @@ import { useAuthStore } from '@/stores/useAuthStore'
 import { useWsStore } from '@/stores/useWsStore'
 import { request } from '@/api/request'
 import { getCurrentUserApi } from '@/api/auth'
+import { controlGateApi, getGateStatusApi } from '@/api/device'
 
 import AppHeader from '@/components/AppHeader.vue'
 import type { ToolAnchor } from '@/components/AppHeader.vue'
@@ -53,6 +54,13 @@ const plateHistoryRange = ref<{ earliest: string; latest: string } | null>(null)
 const showPlcControl = ref(false)
 const showAiStatus = ref(false)
 const showDeviceStatus = ref(false)
+/** 主页闸机图标 — 对齐 GateUIController */
+const gateOnline = ref(false)
+const gateOpen = ref(false)
+const gateBusy = ref(false)
+const showGateHint = ref(false)
+const gateHintMessage = ref('')
+let gateStatusTimer: ReturnType<typeof setInterval> | null = null
 const showUserMgr = ref(false)
 const showUsrMgrDenied = ref(false)
 /** 可视对讲 — 对齐 Qt TalkDialog（底部喇叭按钮） */
@@ -1289,9 +1297,58 @@ function openBookingDialog() {
   workflow.value.bookingActive = bookingStore.bookingActive
 }
 
+function showGateMessage(msg: string) {
+  gateHintMessage.value = msg
+  showGateHint.value = true
+}
+
+async function refreshGateStatus() {
+  try {
+    const res = await getGateStatusApi()
+    if (res.code === 0 && res.data) {
+      gateOnline.value = !!res.data.connected
+      gateOpen.value = !!res.data.gateOpen
+    }
+  } catch {
+    gateOnline.value = false
+  }
+}
+
+/** 对齐 Qt GateUIController::onIconClicked：点击切换抬杆/落杆 */
+async function onGateIconClick() {
+  if (gateBusy.value) return
+  if (!gateOnline.value) {
+    showGateMessage('栏杆机未连接')
+    void refreshGateStatus()
+    return
+  }
+  gateBusy.value = true
+  try {
+    const res = await controlGateApi('toggle')
+    if (res.code === 0) {
+      if (res.data && typeof res.data.gateOpen === 'boolean') {
+        gateOpen.value = res.data.gateOpen
+        gateOnline.value = true
+      } else {
+        await refreshGateStatus()
+      }
+    } else {
+      showGateMessage(res.message || '栏杆控制失败')
+      await refreshGateStatus()
+    }
+  } catch (e) {
+    showGateMessage(e instanceof Error ? e.message : '栏杆控制失败')
+    await refreshGateStatus()
+  } finally {
+    gateBusy.value = false
+  }
+}
+
 function onWorkflowClick(key: WorkflowStepKey) {
   if (key === 'book') {
     openBookingDialog()
+  } else if (key === 'gate') {
+    void onGateIconClick()
   }
 }
 
@@ -2057,11 +2114,19 @@ onMounted(async () => {
   document.addEventListener('click', onXrayDocClick)
   await nextTick()
   startLiveVideo()
+  void refreshGateStatus()
+  gateStatusTimer = setInterval(() => {
+    void refreshGateStatus()
+  }, 2000)
 })
 
 onUnmounted(() => {
   document.removeEventListener('click', onXrayDocClick)
   window.clearTimeout(xrayApplyTimer)
+  if (gateStatusTimer) {
+    clearInterval(gateStatusTimer)
+    gateStatusTimer = null
+  }
   stopLiveVideo()
   wsStore.disconnect()
 })
@@ -2188,6 +2253,8 @@ const anyDialogOpen = computed(
           <BottomWorkflowPanel
             :booking-active="workflow.bookingActive"
             :distance="workflow.distance"
+            :gate-online="gateOnline"
+            :gate-open="gateOpen"
             @workflow-click="onWorkflowClick"
             @talk-click="showTalkDialog = true"
           />
@@ -2559,6 +2626,17 @@ const anyDialogOpen = computed(
       :buttons="['yes']"
       @yes="stopErrorVisible = false"
       @close="stopErrorVisible = false"
+    />
+
+    <!-- 闸机点击提示 — 对齐 GateUIController QMessageBox -->
+    <QtMessageBox
+      v-if="showGateHint"
+      title="提示"
+      :message="gateHintMessage"
+      icon="warning"
+      :buttons="['yes']"
+      @yes="showGateHint = false"
+      @close="showGateHint = false"
     />
 
     <!-- 主页实时视频：VisualSurveillance MJPEG；裁切叠层来自车身/透视框图（非 MJPEG 截帧） -->

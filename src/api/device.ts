@@ -73,3 +73,25 @@ export function releaseVoiceChannelApi(opts?: {
     }),
   })
 }
+
+export interface GateStatus {
+  connected: boolean
+  gateOpen: boolean
+  lastError?: string
+}
+
+/** GET /api/device/gate-status */
+export function getGateStatusApi() {
+  return request<GateStatus>('/device/gate-status')
+}
+
+/**
+ * 主闸栏杆控制 — 对齐 Qt Gate::openGate / closeGate / 图标点击 toggle
+ * POST /api/device/gate_001/control
+ */
+export function controlGateApi(action: 'open' | 'close' | 'toggle') {
+  return request<GateStatus | null>('/device/gate_001/control', {
+    method: 'POST',
+    body: JSON.stringify({ action }),
+  })
+}
