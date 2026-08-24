@@ -77,7 +77,15 @@ export function releaseVoiceChannelApi(opts?: {
 export interface GateStatus {
   connected: boolean
   gateOpen: boolean
+  stickdown?: boolean | null
   lastError?: string
+  /** 最近一次控制：组播是否发出 */
+  sent?: boolean
+  /** DEVICE bit6 是否在等待窗口内变成目标值 */
+  confirmed?: boolean
+  packet?: string
+  cmdRaw?: number | null
+  note?: string
 }
 
 /** GET /api/device/gate-status */

@@ -61,6 +61,21 @@ const gateBusy = ref(false)
 const showGateHint = ref(false)
 const gateHintMessage = ref('')
 let gateStatusTimer: ReturnType<typeof setInterval> | null = null
+/** 组播 XRSUP/XRSDOWN（或旧 XRAY200/160）→ 底栏光机读数 */
+const xrayTelemetry = ref({
+  kv200: '-',
+  ma200: '-',
+  temp200: '-',
+  kv160: '-',
+  ma160: '-',
+  temp160: '-',
+})
+
+function _fmtXrayNum(v: unknown): string {
+  const n = Number(v)
+  if (!Number.isFinite(n)) return '-'
+  return Number.isInteger(n) ? String(n) : n.toFixed(1)
+}
 const showUserMgr = ref(false)
 const showUsrMgrDenied = ref(false)
 /** 可视对讲 — 对齐 Qt TalkDialog（底部喇叭按钮） */
@@ -1302,15 +1317,37 @@ function showGateMessage(msg: string) {
   showGateHint.value = true
 }
 
+/** stickdown/bit6：1=抬起，0=落下 */
+function applyGateFromStickdown(stickdown: boolean) {
+  gateOpen.value = stickdown
+}
+
 async function refreshGateStatus() {
   try {
     const res = await getGateStatusApi()
     if (res.code === 0 && res.data) {
       gateOnline.value = !!res.data.connected
-      gateOpen.value = !!res.data.gateOpen
+      if (typeof res.data.stickdown === 'boolean') {
+        applyGateFromStickdown(res.data.stickdown)
+      } else {
+        gateOpen.value = !!res.data.gateOpen
+      }
     }
   } catch {
     gateOnline.value = false
+  }
+}
+
+/** 打开页时回放最近一次 DEVICE，避免图标一直默认落下 */
+async function refreshGateFromPlcCache() {
+  try {
+    const res = await request<Record<string, unknown> | null>('/device/plc-status')
+    if (res.code === 0 && res.data && typeof res.data.stickdown === 'boolean') {
+      applyGateFromStickdown(res.data.stickdown)
+      gateOnline.value = true
+    }
+  } catch {
+    /* 尚无缓存时忽略 */
   }
 }
 
@@ -1326,11 +1363,23 @@ async function onGateIconClick() {
   try {
     const res = await controlGateApi('toggle')
     if (res.code === 0) {
-      if (res.data && typeof res.data.gateOpen === 'boolean') {
-        gateOpen.value = res.data.gateOpen
+      const d = res.data
+      if (d && typeof d.gateOpen === 'boolean') {
+        gateOpen.value = d.gateOpen
         gateOnline.value = true
       } else {
         await refreshGateStatus()
+      }
+      // 组播无协议 ACK：用 confirmed / message 告知结果
+      if (d && d.confirmed === false && d.sent) {
+        showGateMessage(
+          res.message
+            || '已发组播，但未看到栏杆状态变化（中间件可能未处理）',
+        )
+      } else if (d && d.confirmed) {
+        console.info('[gate]', res.message, d.packet, 'stickdown=', d.stickdown)
+      } else if (res.message) {
+        console.info('[gate]', res.message)
       }
     } else {
       showGateMessage(res.message || '栏杆控制失败')
@@ -1787,6 +1836,30 @@ function setupWS() {
       openStopFlag.value = true
       showStopResetBox.value = true
     }
+    // DEVICE cmd bit6 → 闸机图标（1=抬起，0=落下）
+    if (data && typeof data.stickdown === 'boolean') {
+      applyGateFromStickdown(data.stickdown)
+      gateOnline.value = true
+    }
+  })
+
+  // $NTRMC,XRSUP/XRSDOWN（及旧 XRAY200/160）
+  wsStore.subscribe('xray_status', (msg) => {
+    const data = msg.data as {
+      type?: string
+      kv?: number
+      ma?: number
+      temperature?: number
+    } | undefined
+    if (!data?.type) return
+    const kv = _fmtXrayNum(data.kv)
+    const ma = _fmtXrayNum(data.ma)
+    const temp = _fmtXrayNum(data.temperature)
+    if (String(data.type) === '200') {
+      xrayTelemetry.value = { ...xrayTelemetry.value, kv200: kv, ma200: ma, temp200: temp }
+    } else if (String(data.type) === '160') {
+      xrayTelemetry.value = { ...xrayTelemetry.value, kv160: kv, ma160: ma, temp160: temp }
+    }
   })
 
   wsStore.subscribe('detection_step', (msg) => {
@@ -2115,6 +2188,7 @@ onMounted(async () => {
   await nextTick()
   startLiveVideo()
   void refreshGateStatus()
+  void refreshGateFromPlcCache()
   gateStatusTimer = setInterval(() => {
     void refreshGateStatus()
   }, 2000)
@@ -2255,6 +2329,12 @@ const anyDialogOpen = computed(
             :distance="workflow.distance"
             :gate-online="gateOnline"
             :gate-open="gateOpen"
+            :kv200="xrayTelemetry.kv200"
+            :ma200="xrayTelemetry.ma200"
+            :temp200="xrayTelemetry.temp200"
+            :kv160="xrayTelemetry.kv160"
+            :ma160="xrayTelemetry.ma160"
+            :temp160="xrayTelemetry.temp160"
             @workflow-click="onWorkflowClick"
             @talk-click="showTalkDialog = true"
           />

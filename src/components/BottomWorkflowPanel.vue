@@ -18,6 +18,18 @@ defineProps<{
 
   gateOpen?: boolean
 
+  kv200?: string
+
+  ma200?: string
+
+  temp200?: string
+
+  kv160?: string
+
+  ma160?: string
+
+  temp160?: string
+
 }>()
 
 
@@ -50,6 +62,12 @@ const emit = defineEmits<{
     <TruckScene :distance="distance" />
 
     <HardwareStatusBar
+      :kv200="kv200"
+      :ma200="ma200"
+      :temp200="temp200"
+      :kv160="kv160"
+      :ma160="ma160"
+      :temp160="temp160"
       @talk-click="emit('talkClick')"
       @dm-temp-click="emit('dmTempClick')"
     />
