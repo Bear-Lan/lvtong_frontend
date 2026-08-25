@@ -35,6 +35,21 @@ export function createHttpBookingApi(): BookingPort {
       throw new Error(res.message || '雷达图像获取失败')
     },
 
+    async recordBtnPress(source: 'ui' | 'plc' = 'ui') {
+      const res = await request<{ btnPressTime?: string; lastBtnClickTime?: string }>(
+        '/booking/btn-press',
+        {
+          method: 'POST',
+          body: JSON.stringify({ source, pushWs: source !== 'ui' }),
+        },
+      )
+      if (res.code !== 0) {
+        throw new Error(res.message || '预约按键记时失败')
+      }
+      const t = res.data?.btnPressTime || res.data?.lastBtnClickTime || ''
+      return { btnPressTime: t }
+    },
+
     async openDialog() {
       // 对齐 onRefreshOrderDialog：设备侧效应由后端执行
       // 合并并发 open，防止弹窗重复挂载时多次播报/抢通道
@@ -108,6 +123,11 @@ export function createMockBookingApi(): BookingPort {
     async fetchRadarImage() {
       // 返回 null：UI 显示「雷达测量来车信息区域」占位（对齐 Qt 无图态）
       return null
+    },
+    async recordBtnPress(source: 'ui' | 'plc' = 'ui') {
+      const t = new Date().toISOString()
+      console.info('[BookingPort] mock btn-press', source, t)
+      return { btnPressTime: t }
     },
     async openDialog() {
       return { videoStreamUrl: null, devicesReady: true }

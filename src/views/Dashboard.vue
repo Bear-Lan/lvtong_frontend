@@ -1306,7 +1306,16 @@ function captureInitialImages(kind: CaptureKind): string[] {
 }
 
 // ---- 预约 — 对齐 LvTongPro::onCarComingClicked / onBookingDebounceTimeout ----
-function openBookingDialog() {
+/** @param recordPress 操作台点「预约」需记按键时间；现场键已记过则 false */
+async function openBookingDialog(opts?: { recordPress?: boolean }) {
+  if (opts?.recordPress) {
+    try {
+      const { getBookingApi } = await import('@/modules/booking/api/bookingApi')
+      await getBookingApi().recordBtnPress('ui')
+    } catch (e) {
+      console.warn('[Booking] 操作台预约记时失败:', e)
+    }
+  }
   // 检测中不弹窗
   bookingStore.openDialog()
   workflow.value.bookingActive = bookingStore.bookingActive
@@ -1395,7 +1404,8 @@ async function onGateIconClick() {
 
 function onWorkflowClick(key: WorkflowStepKey) {
   if (key === 'book') {
-    openBookingDialog()
+    // 操作台点「预约」= 与现场按键同等：记 btn 时间后再弹窗
+    void openBookingDialog({ recordPress: true })
   } else if (key === 'gate') {
     void onGateIconClick()
   }
@@ -1936,16 +1946,26 @@ function setupWS() {
       | undefined
     if (!data?.imageType) return
 
+    const withCacheBust = (raw: string) => {
+      const apiUrl = toImageUrl(raw)
+      if (!apiUrl) return ''
+      if (apiUrl.startsWith('data:') || apiUrl.startsWith('blob:')) return apiUrl
+      return `${apiUrl}${apiUrl.includes('?') ? '&' : '?'}t=${Date.now()}`
+    }
+    /** urls 键兼容 '1' / 1 */
+    const pickUrl = (urls: Record<string, string>, key: string) => {
+      const raw =
+        urls[key] ??
+        (urls as Record<string | number, string>)[Number(key)]
+      return raw ? withCacheBust(String(raw)) : ''
+    }
+
     // 调度器自动采集 / 手动同逻辑：单张 url（多为 dataUrl，提交时再落盘）
     if (data.url) {
       const raw = String(data.url)
       const isInline =
         raw.startsWith('data:') || raw.startsWith('blob:')
-      // dataUrl/blob 不能拼 ?t=；磁盘 API 路径才做防缓存
-      const apiUrl = toImageUrl(raw)
-      const viewUrl = isInline
-        ? apiUrl
-        : `${apiUrl}${apiUrl.includes('?') ? '&' : '?'}t=${Date.now()}`
+      const viewUrl = withCacheBust(raw)
       const t = data.imageType
       if (t === 'head' || t === 'tail' || t === 'top' || t === 'goods' || t === 'evidence' || t === 'license') {
         captureThumbs.value = { ...captureThumbs.value, [t]: viewUrl }
@@ -1960,22 +1980,37 @@ function setupWS() {
     // 中间设备 agent / 占位批量出图 → 仅填车身影像、透视影像
     if (!data.urls) return
     if (data.imageType === 'body') {
-      // 分帧写入，减轻同 tick 多面板解码压力
-      requestAnimationFrame(() => {
-        if (data.urls!['1']) bodyImageUrls.value.body = data.urls!['1']
-        if (data.urls!['2']) bodyImageUrls.value.top = data.urls!['2']
-        if (data.urls!['3']) bodyImageUrls.value.side = data.urls!['3']
-      })
+      const u1 = pickUrl(data.urls, '1')
+      const u2 = pickUrl(data.urls, '2')
+      const u3 = pickUrl(data.urls, '3')
+      // 整对象替换，保证面板 computed 一定刷新
+      bodyImageUrls.value = {
+        body: u1 || bodyImageUrls.value.body,
+        top: u2 || bodyImageUrls.value.top,
+        side: u3 || bodyImageUrls.value.side,
+      }
+      console.info(
+        `[WS] image_ready body → body=${!!u1} top=${!!u2} side=${!!u3}`,
+        data.urls,
+      )
     } else if (data.imageType === 'transparent') {
-      requestAnimationFrame(() => {
-        if (data.urls!['1']) xrayImageUrls.value['200'] = data.urls!['1']
-        if (data.urls!['2']) xrayImageUrls.value['160'] = data.urls!['2']
-        if (data.urls!['3']) xrayImageUrls.value.mosaic = data.urls!['3']
-      })
+      const u1 = pickUrl(data.urls, '1')
+      const u2 = pickUrl(data.urls, '2')
+      const u3 = pickUrl(data.urls, '3')
+      xrayImageUrls.value = {
+        '200': u1 || xrayImageUrls.value['200'],
+        '160': u2 || xrayImageUrls.value['160'],
+        mosaic: u3 || xrayImageUrls.value.mosaic,
+      }
+      console.info(
+        `[WS] image_ready transparent → 200=${!!u1} 160=${!!u2} mosaic=${!!u3}`,
+        data.urls,
+      )
+    } else {
+      console.info(
+        `[WS] image_ready group: ${data.imageType} group=${data.group} urls=${Object.keys(data.urls).length}`,
+      )
     }
-    console.info(
-      `[WS] image_ready group: ${data.imageType} group=${data.group} urls=${Object.keys(data.urls).length}`,
-    )
   })
 
   /** 移动 app 上传 — 对齐 LvTongPro.cpp:1680-1948 JsonFolderWatcher 回调 */

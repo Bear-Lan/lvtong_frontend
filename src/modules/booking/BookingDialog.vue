@@ -95,6 +95,7 @@ const {
   hidePluginOverlay,
   toggleTalk,
   stopTalk,
+  startTalk,
 } = useHikvisionPlayer(hikTalkAnchorRef)
 
 /** 后端 /booking/open 阻塞播 step2 期间 */
@@ -221,15 +222,22 @@ onMounted(async () => {
   } catch {
     /* ignore */
   }
-  // 2) 播报期间预热海康插件；autoTalk 会等通道锁，播完立刻开讲
-  startHik(TALK_CAMERA_DEVICE_ID, { autoTalk: true, talkOnly: true })
+  // 2) 只预热海康插件，不要 autoTalk：避免抢在 step2 前占 TwoWayAudio
+  startHik(TALK_CAMERA_DEVICE_ID, { autoTalk: false, talkOnly: true })
   announcePlaying.value = true
   try {
     await initDialog({ fetchRadar: false })
   } finally {
     announcePlaying.value = false
   }
-  // 3) 雷达图与对讲并行，不挡开讲
+  // 3) step2 播完且 /open 返回后再开对讲（插件可能仍在加载，短等 playing）
+  void (async () => {
+    for (let i = 0; i < 50; i++) {
+      if (talkStatus.value === 'playing') break
+      await new Promise<void>((r) => window.setTimeout(r, 100))
+    }
+    await startTalk()
+  })()
   void refreshRadarImage({ maxRetries: 2 })
 })
 

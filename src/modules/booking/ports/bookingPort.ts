@@ -20,6 +20,12 @@ export interface BookingPort {
   fetchRadarImage(): Promise<RadarImageResponse | null>
 
   /**
+   * 预约按键记时（操作台「预约」/ 现场键共用）
+   * REST: POST /api/booking/btn-press
+   */
+  recordBtnPress(source?: 'ui' | 'plc'): Promise<{ btnPressTime: string }>
+
+  /**
    * 弹窗打开初始化
    * 对齐 OrderDialog::onRefreshOrderDialog
    * （开 SP 预览+对讲、关闸、LED step2、清图、拉雷达）
