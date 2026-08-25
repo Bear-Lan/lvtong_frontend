@@ -99,7 +99,7 @@ const states = ref<Record<string, boolean>>({
 })
 
 function applyStatus(d: Record<string, unknown>) {
-  // 对齐硬件 CMD_*/STATUS_* 与 parse_plc_status 字段
+  // 对齐中间件 ST_* / parse_dev_bits 字段
   states.value.redlight = !!(d.redLightCmd ?? d.redlight ?? d.red)
   states.value.yellowlight = !!(d.yellowLightCmd ?? d.yellowlight ?? d.yellow)
   states.value.greenlight = !!(d.greenLightCmd ?? d.greenlight ?? d.green)
