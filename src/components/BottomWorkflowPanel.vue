@@ -12,6 +12,8 @@ defineProps<{
 
   bookingActive?: boolean
 
+  bookingPending?: boolean
+
   distance?: number
 
   gateOnline?: boolean
@@ -54,6 +56,7 @@ const emit = defineEmits<{
 
     <WorkflowIcons
       :booking-active="bookingActive"
+      :booking-pending="bookingPending"
       :gate-online="gateOnline"
       :gate-open="gateOpen"
       @click="emit('workflowClick', $event)"

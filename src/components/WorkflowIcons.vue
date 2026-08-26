@@ -15,6 +15,8 @@ interface WorkflowItem {
 const props = withDefaults(
   defineProps<{
     bookingActive?: boolean
+    /** 待受理：预约图标闪烁 */
+    bookingPending?: boolean
     /** 栏杆在线 — 对齐 GateUIController */
     gateOnline?: boolean
     /** 栏杆抬起 */
@@ -22,6 +24,7 @@ const props = withDefaults(
   }>(),
   {
     bookingActive: false,
+    bookingPending: false,
     gateOnline: false,
     gateOpen: false,
   },
@@ -72,17 +75,32 @@ const cellWidthPct = `${(SEGMENT_PIX / SCENE_WIDTH) * 100}%`
         :key="item.key"
         type="button"
         class="wf-btn"
+        :class="{
+          'is-book-pending': item.key === 'book' && bookingPending,
+          'is-book-disabled': item.key === 'book' && bookingActive,
+        }"
         :style="{ width: cellWidthPct }"
-        :title="item.title || item.label"
+        :title="
+          item.key === 'book' && bookingActive
+            ? '检测进行中，无法预约'
+            : item.title || item.label
+        "
+        :disabled="item.key === 'book' && bookingActive"
         @click="emit('click', item.key)"
       >
         <img
           :src="item.icon"
           :alt="item.label"
           class="wf-icon"
-          :class="{ wide: item.wide }"
+          :class="{ wide: item.wide, blink: item.key === 'book' && bookingPending }"
         />
-        <span class="wf-label" :class="{ active: item.key === 'book' && bookingActive }">
+        <span
+          class="wf-label"
+          :class="{
+            active: item.key === 'book' && bookingActive,
+            pending: item.key === 'book' && bookingPending,
+          }"
+        >
           {{ item.label }}
         </span>
       </button>
@@ -137,6 +155,10 @@ const cellWidthPct = `${(SEGMENT_PIX / SCENE_WIDTH) * 100}%`
     width: 104px;
     height: 52px;
   }
+
+  &.blink {
+    animation: book-blink 1s ease-in-out infinite;
+  }
 }
 
 .wf-label {
@@ -147,6 +169,25 @@ const cellWidthPct = `${(SEGMENT_PIX / SCENE_WIDTH) * 100}%`
 
   &.active {
     color: #059669;
+  }
+
+  &.pending {
+    color: #d97706;
+  }
+}
+
+.wf-btn.is-book-disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+@keyframes book-blink {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.25;
   }
 }
 </style>

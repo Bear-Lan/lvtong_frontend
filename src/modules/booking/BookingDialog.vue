@@ -102,7 +102,7 @@ const {
 const announcePlaying = ref(true)
 
 const talkHint = computed(() => {
-  if (announcePlaying.value) return '语音播报中，稍后自动开对讲…'
+  if (announcePlaying.value) return '播报中'
   if (talkBusy.value) return talking.value ? '对讲连接中…' : '正在停止对讲…'
   if (talking.value) return '对讲中'
   if (talkStatus.value === 'error') return talkStatusText.value || '对讲失败'
@@ -146,7 +146,7 @@ const canReject = computed(
 )
 const decideHint = computed(() => {
   if (submitting.value) return ''
-  if (announcePlaying.value) return '正在语音播报「申请已接收…」，播完后自动开启对讲'
+  if (announcePlaying.value) return '播报中，结束后自动开启对讲'
   if (loading.value) return '正在拉取雷达图（失败会自动重试），请稍候…'
   if (canAccept.value) return ''
   if (radarFetchFailed.value && !radarReady.value) {
@@ -215,22 +215,23 @@ watch(confirmVisible, (visible) => {
 onMounted(async () => {
   await nextTick()
   await new Promise<void>((r) => requestAnimationFrame(() => r()))
-  // 1) WHEP 画面可先开（不占 TwoWayAudio）
+  // 1) 开窗立刻：WHEP 视频（不占 TwoWayAudio）
   void startBookingVideo()
   try {
     stopTalk()
   } catch {
     /* ignore */
   }
-  // 2) 只预热海康插件，不要 autoTalk：避免抢在 step2 前占 TwoWayAudio
+  // 2) 预热海康插件，不 autoTalk（step2 占用 TwoWayAudio）
   startHik(TALK_CAMERA_DEVICE_ID, { autoTalk: false, talkOnly: true })
+  // 3) /open 等 step2；雷达图与之并行立刻拉取
   announcePlaying.value = true
   try {
-    await initDialog({ fetchRadar: false })
+    await initDialog({ fetchRadar: true })
   } finally {
     announcePlaying.value = false
   }
-  // 3) step2 播完且 /open 返回后再开对讲（插件可能仍在加载，短等 playing）
+  // 4) 播报结束、通道释放后再开对讲
   void (async () => {
     for (let i = 0; i < 50; i++) {
       if (talkStatus.value === 'playing') break
@@ -238,7 +239,6 @@ onMounted(async () => {
     }
     await startTalk()
   })()
-  void refreshRadarImage({ maxRetries: 2 })
 })
 
 onBeforeUnmount(() => {
@@ -302,14 +302,18 @@ onBeforeUnmount(() => {
         <button
           type="button"
           class="btn-talk"
-          :class="{ on: talking }"
+          :class="{ on: talking, announcing: announcePlaying }"
           :disabled="!canToggleTalk"
           :title="talkHint || '对讲'"
           @click="toggleTalk"
         >
-          {{ talking ? '停止对讲' : '对讲' }}
+          {{ announcePlaying ? '播报中' : talking ? '停止对讲' : '对讲' }}
         </button>
-        <span v-if="talkHint" class="talk-hint" :class="{ err: talkStatus === 'error' }">
+        <span
+          v-if="talkHint && !announcePlaying"
+          class="talk-hint"
+          :class="{ err: talkStatus === 'error' }"
+        >
           {{ talkHint }}
         </span>
         <span class="sp sp-120" />
@@ -534,6 +538,11 @@ onBeforeUnmount(() => {
 
   &.on {
     background: #d97706;
+  }
+
+  &.announcing {
+    background: #6b7280;
+    color: #f3f4f6;
   }
 
   &:hover:not(:disabled) {

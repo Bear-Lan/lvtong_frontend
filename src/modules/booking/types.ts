@@ -97,4 +97,8 @@ export interface BookingComingPayload {
   action?: string
   plate?: string
   distance?: number
+  /** 空闲为 true：前端可弹窗；检测中为 false：只闪烁不弹窗 */
+  openDialog?: boolean
+  btnPrebookState?: boolean
+  btnPressTime?: string
 }

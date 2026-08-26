@@ -36,18 +36,24 @@ export function createHttpBookingApi(): BookingPort {
     },
 
     async recordBtnPress(source: 'ui' | 'plc' = 'ui') {
-      const res = await request<{ btnPressTime?: string; lastBtnClickTime?: string }>(
-        '/booking/btn-press',
-        {
-          method: 'POST',
-          body: JSON.stringify({ source, pushWs: source !== 'ui' }),
-        },
-      )
+      const res = await request<{
+        btnPressTime?: string
+        lastBtnClickTime?: string
+        openDialog?: boolean
+        btnPrebookState?: boolean
+      }>('/booking/btn-press', {
+        method: 'POST',
+        body: JSON.stringify({ source, pushWs: source !== 'ui' }),
+      })
       if (res.code !== 0) {
         throw new Error(res.message || '预约按键记时失败')
       }
       const t = res.data?.btnPressTime || res.data?.lastBtnClickTime || ''
-      return { btnPressTime: t }
+      return {
+        btnPressTime: t,
+        openDialog: res.data?.openDialog,
+        btnPrebookState: res.data?.btnPrebookState,
+      }
     },
 
     async openDialog() {
@@ -127,7 +133,7 @@ export function createMockBookingApi(): BookingPort {
     async recordBtnPress(source: 'ui' | 'plc' = 'ui') {
       const t = new Date().toISOString()
       console.info('[BookingPort] mock btn-press', source, t)
-      return { btnPressTime: t }
+      return { btnPressTime: t, openDialog: true, btnPrebookState: true }
     },
     async openDialog() {
       return { videoStreamUrl: null, devicesReady: true }

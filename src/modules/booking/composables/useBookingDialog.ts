@@ -163,7 +163,9 @@ export function useBookingDialog() {
     }
   }
 
-  /** 对齐 onRefreshOrderDialog；open 会阻塞播报 step2（约数秒） */
+  /** 对齐 onRefreshOrderDialog。
+   * open 会阻塞等 step2；雷达图与 open 并行拉取，不堵在播报之后。
+   */
   async function initDialog(opts?: { fetchRadar?: boolean }) {
     xrayEnabled.value = true
     radarImageUrl.value = null
@@ -175,6 +177,12 @@ export function useBookingDialog() {
     originalImageWidth.value = 0
     errorMessage.value = ''
     radarFetchFailed.value = false
+
+    // 雷达图立刻拉，与 /open（等 step2）并行
+    const radarPromise =
+      opts?.fetchRadar === false
+        ? Promise.resolve()
+        : refreshRadarImage({ maxRetries: 2 })
 
     try {
       const openResult = await api.openDialog()
@@ -188,10 +196,8 @@ export function useBookingDialog() {
       console.warn('[BookingDialog] openDialog 失败:', e)
     }
 
-    if (opts?.fetchRadar === false) {
-      return
-    }
-    await refreshRadarImage({ maxRetries: 2 })
+    // 不 await radar：播报结束即可开对讲；图仍在 loading 时由 canAccept 卡住受理
+    void radarPromise
   }
 
   /** 对齐 onCarTypeClicked */

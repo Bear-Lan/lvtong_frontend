@@ -1305,25 +1305,71 @@ function captureInitialImages(kind: CaptureKind): string[] {
   return one ? [one] : []
 }
 
-// ---- 预约 — 对齐 LvTongPro::onCarComingClicked / onBookingDebounceTimeout ----
-/** @param recordPress 操作台点「预约」需记按键时间；现场键已记过则 false */
+// ---- 预约 — 按键：任意时刻红灯落杆 step2；仅空闲弹窗 ----
+/** @param recordPress 操作台点「预约」需走 btn-press；现场键已记过则 false */
 async function openBookingDialog(opts?: { recordPress?: boolean }) {
+  const detecting =
+    bookingStore.isDetection || bookingStore.checkStep > 0 || workflow.value.checkStep > 0
+
   if (opts?.recordPress) {
+    // 检测中操作台不可点（WorkflowIcons disabled）；此处再挡一层
+    if (detecting) {
+      console.warn('[Booking] 检测中忽略操作台预约点击')
+      return
+    }
     try {
       const { getBookingApi } = await import('@/modules/booking/api/bookingApi')
-      await getBookingApi().recordBtnPress('ui')
+      const r = await getBookingApi().recordBtnPress('ui')
+      bookingStore.setBtnPrebookPending(true)
+      if (r.openDialog === false) return
     } catch (e) {
       console.warn('[Booking] 操作台预约记时失败:', e)
     }
   }
-  // 检测中不弹窗
+
+  if (detecting) {
+    bookingStore.setBtnPrebookPending(true)
+    return
+  }
   bookingStore.openDialog()
   workflow.value.bookingActive = bookingStore.bookingActive
 }
 
-function showGateMessage(msg: string) {
-  gateHintMessage.value = msg
-  showGateHint.value = true
+function onWorkflowClick(key: WorkflowStepKey) {
+  if (key === 'book') {
+    void openBookingDialog({ recordPress: true })
+  } else if (key === 'gate') {
+    void onGateIconClick()
+  }
+}
+
+function onBookingAccept(payload: BookingAcceptPayload) {
+  bookingStore.applyAccept(payload)
+  workflow.value.bookingActive = true
+  bookingStore.setBtnPrebookPending(false)
+}
+
+function onBookingReject() {
+  bookingStore.applyReject()
+  workflow.value.bookingActive = false
+  bookingStore.setBtnPrebookPending(false)
+}
+
+/** WS 来车/按键预约 → 空闲才弹窗；检测中只闪烁 */
+function handleBookingComing(msg: { data?: unknown }) {
+  const data = (msg.data ?? {}) as BookingComingPayload
+  const action = data.action
+  if (action === 'book_button') {
+    bookingStore.setBtnPrebookPending(true)
+    if (data.openDialog === false) return
+    openBookingDialog()
+    return
+  }
+  // coming / 无 action：兼容旧推送，仅空闲弹窗
+  if (!action || action === 'coming') {
+    if (bookingStore.isDetection || bookingStore.checkStep > 0) return
+    openBookingDialog()
+  }
 }
 
 /** stickdown/bit6：1=抬起，0=落下 */
@@ -1402,33 +1448,9 @@ async function onGateIconClick() {
   }
 }
 
-function onWorkflowClick(key: WorkflowStepKey) {
-  if (key === 'book') {
-    // 操作台点「预约」= 与现场按键同等：记 btn 时间后再弹窗
-    void openBookingDialog({ recordPress: true })
-  } else if (key === 'gate') {
-    void onGateIconClick()
-  }
-}
-
-function onBookingAccept(payload: BookingAcceptPayload) {
-  bookingStore.applyAccept(payload)
-  workflow.value.bookingActive = true
-}
-
-function onBookingReject() {
-  bookingStore.applyReject()
-  workflow.value.bookingActive = false
-}
-
-/** WS 来车/按键预约 → 自动弹窗 */
-function handleBookingComing(msg: { data?: unknown }) {
-  const data = (msg.data ?? {}) as BookingComingPayload
-  const action = data.action
-  // push_booking_event: coming / book_button；或纯 booking_request
-  if (!action || action === 'coming' || action === 'book_button') {
-    openBookingDialog()
-  }
+function showGateMessage(msg: string) {
+  gateHintMessage.value = msg
+  showGateHint.value = true
 }
 
 // ---- 重置 / 确认 ----
@@ -1897,6 +1919,8 @@ function setupWS() {
         radarHeadImageUrl: data.radarHeadImageUrl,
       })
       workflow.value.bookingActive = true
+    } else {
+      bookingStore.setBtnPrebookPending(false)
     }
     // 同步 6 个时间字段（来自后端 _booking_state 推送）
     if (data) {
@@ -2361,6 +2385,7 @@ const anyDialogOpen = computed(
         <div class="panel-card panel-bottom">
           <BottomWorkflowPanel
             :booking-active="workflow.bookingActive"
+            :booking-pending="bookingStore.btnPrebookPending"
             :distance="workflow.distance"
             :gate-online="gateOnline"
             :gate-open="gateOpen"

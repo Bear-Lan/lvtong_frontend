@@ -43,12 +43,19 @@ export const useBookingStore = defineStore('booking', () => {
   /** 车顶拍照 */
   const cdPhotoTime = ref('')
 
-  /** 底部流程「预约」高亮 */
+  /** 待受理预约（司机/操作台已按键）— 底部「预约」闪烁 */
+  const btnPrebookPending = ref(false)
+
+  /** 底部流程「预约」：检测中常亮；待受理闪烁由 bookingPending 另控 */
   const bookingActive = computed(() => isDetection.value || checkStep.value > 0)
 
+  function setBtnPrebookPending(v: boolean) {
+    btnPrebookPending.value = v
+  }
+
   function openDialog() {
-    if (isDetection.value) {
-      // 对齐 Qt：检测中不弹窗，仅提示
+    if (isDetection.value || checkStep.value > 0) {
+      // 对齐：检测中不弹窗
       console.warn('[BookingStore] 检测进行中，忽略预约弹窗')
       return false
     }
@@ -71,6 +78,7 @@ export const useBookingStore = defineStore('booking', () => {
     }
     isDetection.value = true
     checkStep.value = 1
+    btnPrebookPending.value = false
     dialogVisible.value = false
   }
 
@@ -78,6 +86,7 @@ export const useBookingStore = defineStore('booking', () => {
   function applyReject() {
     isDetection.value = false
     checkStep.value = 0
+    btnPrebookPending.value = false
     dialogVisible.value = false
     radarHeadImageUrl.value = ''
   }
@@ -111,6 +120,7 @@ export const useBookingStore = defineStore('booking', () => {
     carLength.value = state.car_length ?? carLength.value
     isCheckXRay.value = state.is_check_xray ?? isCheckXRay.value
     bookingDialogShown.value = !!state.booking_dialog_shown
+    btnPrebookPending.value = !!state.btn_prebook_state
     // 同步时间字段（如果后端 state 里有）
     const s = state as unknown as Record<string, unknown>
     if (typeof s.btn_prebook_time === 'string') btnPrebookTime.value = s.btn_prebook_time
@@ -131,6 +141,7 @@ export const useBookingStore = defineStore('booking', () => {
     bookingDialogShown.value = false
     videoStreamUrl.value = null
     radarHeadImageUrl.value = ''
+    // 重置不清待受理闪烁：与后端保留 btn_prebook_state 一致，由 sync 决定
     // 时间字段也清空
     btnPrebookTime.value = ''
     acceptanceTime.value = ''
@@ -156,7 +167,9 @@ export const useBookingStore = defineStore('booking', () => {
     openlightscreenTime,
     closelightscreenTime,
     cdPhotoTime,
+    btnPrebookPending,
     bookingActive,
+    setBtnPrebookPending,
     openDialog,
     closeDialog,
     applyAccept,

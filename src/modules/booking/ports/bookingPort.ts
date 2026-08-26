@@ -20,15 +20,19 @@ export interface BookingPort {
   fetchRadarImage(): Promise<RadarImageResponse | null>
 
   /**
-   * 预约按键记时（操作台「预约」/ 现场键共用）
+   * 预约按键（操作台「预约」/ 现场键共用）
+   * 任意时刻：记时 + 红灯落杆 + step2；空闲时 openDialog=true
    * REST: POST /api/booking/btn-press
    */
-  recordBtnPress(source?: 'ui' | 'plc'): Promise<{ btnPressTime: string }>
+  recordBtnPress(source?: 'ui' | 'plc'): Promise<{
+    btnPressTime: string
+    openDialog?: boolean
+    btnPrebookState?: boolean
+  }>
 
   /**
-   * 弹窗打开初始化
-   * 对齐 OrderDialog::onRefreshOrderDialog
-   * （开 SP 预览+对讲、关闸、LED step2、清图、拉雷达）
+   * 弹窗打开初始化（空闲弹窗后）
+   * 等待按键已发起的 step2 播完，释放对讲通道；拉雷达由前端另调
    * REST: POST /api/booking/open
    */
   openDialog(): Promise<BookingOpenResult>
