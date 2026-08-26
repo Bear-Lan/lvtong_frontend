@@ -45,16 +45,10 @@ export interface BookingPort {
   stopVideoSession(): Promise<void>
 
   /**
-   * 受理（阻塞播完 step3；不启动调度器）
+   * 受理
    * REST: POST /api/booking/accept
    */
   acceptBooking(payload: BookingAcceptPayload): Promise<void>
-
-  /**
-   * 关弹窗后启动距离调度器（雷达占道检测 / 抬杆）
-   * REST: POST /api/booking/start-scheduler
-   */
-  startScheduler(): Promise<void>
 
   /**
    * 驳回 / 关窗等同驳回

@@ -169,7 +169,7 @@ function onRadarImageError() {
 
 async function handleConfirmYes() {
   try {
-    // 1) 先关视频 + 对讲（释放 TwoWayAudio，再接 step3）
+    // 受理/驳回前先停 WHEP + 海康对讲，再接 step3（可被抬杆 step4 打断）
     try {
       await stopVideo()
     } catch {
@@ -180,17 +180,10 @@ async function handleConfirmYes() {
     } catch {
       /* ignore */
     }
-    // 2) accept：后端阻塞播完 step3；3) 再关弹窗；4) 开调度器
     const result = await confirmYes()
     if (result?.kind === 'accept') {
       emit('accept', result.payload)
       emit('close')
-      try {
-        const { getBookingApi } = await import('./api/bookingApi')
-        await getBookingApi().startScheduler()
-      } catch (e) {
-        console.warn('[BookingDialog] 启动调度器失败:', e)
-      }
     } else if (result?.kind === 'reject') {
       emit('reject')
       emit('close')

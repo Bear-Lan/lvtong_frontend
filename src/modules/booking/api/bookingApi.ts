@@ -99,21 +99,12 @@ export function createHttpBookingApi(): BookingPort {
         ...payload,
         acceptanceTime: payload.acceptanceTime ?? new Date().toISOString(),
       }
-      // accept 内阻塞播 step3（约数秒），超时放宽
       const res = await request('/booking/accept', {
         method: 'POST',
         body: JSON.stringify(body),
-        timeout: 90000,
       })
       if (res.code !== 0) {
         throw new Error(res.message || '受理失败')
-      }
-    },
-
-    async startScheduler() {
-      const res = await request('/booking/start-scheduler', { method: 'POST' })
-      if (res.code !== 0) {
-        throw new Error(res.message || '启动调度器失败')
       }
     },
 
@@ -150,9 +141,6 @@ export function createMockBookingApi(): BookingPort {
     async stopVideoSession() {},
     async acceptBooking(payload) {
       console.info('[BookingPort] mock accept', payload)
-    },
-    async startScheduler() {
-      console.info('[BookingPort] mock startScheduler')
     },
     async rejectBooking() {
       console.info('[BookingPort] mock reject')
