@@ -50,7 +50,7 @@ const controlSwitches: SwitchItem[] = [
   { key: 'redlight', field: 'redlight', label: '红灯', tipOn: '红灯打开 ?', tipOff: '红灯关闭 ?' },
   { key: 'yellowlight', field: 'yellowlight', label: '黄灯', tipOn: '黄灯打开 ?', tipOff: '黄灯关闭 ?' },
   { key: 'greenlight', field: 'greenlight', label: '绿灯', tipOn: '绿灯打开 ?', tipOff: '绿灯关闭 ?' },
-  { key: 'createlight', field: 'createlight', label: '补光灯', tipOn: '补光灯打开 ?', tipOff: '补光灯关闭 ?' },
+  { key: 'filllight', field: 'filllight', label: '补光灯', tipOn: '补光灯打开 ?', tipOff: '补光灯关闭 ?' },
   { key: 'xraygate160', field: 'xraygate160', label: '160光闸', tipOn: '160光闸打开 ?', tipOff: '160光闸关闭 ?' },
   { key: 'interlock160', field: 'interlock160', label: '160InterLock', tipOn: '160InterLock打开 ?', tipOff: '160InterLock关闭 ?' },
   { key: 'xraygate200', field: 'xraygate200', label: '200光闸', tipOn: '200光闸打开 ?', tipOff: '200光闸关闭 ?' },
@@ -80,7 +80,7 @@ const states = ref<Record<string, boolean>>({
   redlight: false,
   yellowlight: false,
   greenlight: false,
-  createlight: false,
+  filllight: false,
   xraygate160: false,
   interlock160: false,
   xraygate200: false,
@@ -103,15 +103,15 @@ function applyStatus(d: Record<string, unknown>) {
   states.value.redlight = !!(d.redLightCmd ?? d.redlight ?? d.red)
   states.value.yellowlight = !!(d.yellowLightCmd ?? d.yellowlight ?? d.yellow)
   states.value.greenlight = !!(d.greenLightCmd ?? d.greenlight ?? d.green)
-  states.value.createlight = !!(d.createLightCmd ?? d.createlight ?? d.greatlight)
+  states.value.filllight = !!(d.createLightCmd ?? d.filllight)
   states.value.soundalarm = !!(d.soundalarmCmd ?? d.soundalarm)
   states.value.interlock160 = !!(d.interlock160Cmd ?? d.interlock160)
   states.value.interlock200 = !!(d.interlock200Cmd ?? d.interlock200)
   // 急停：优先 STATUS，其次 CMD
-  states.value.urgentstop = !!(d.urgentStopStatus ?? d.urgentstop ?? d.urgentStopCmd ?? d.urgentstop_cmd)
+  states.value.urgentstop = !!(d.urgentStopStatus ?? d.urgentstop ?? d.urgentStopCmd)
   // 光闸：优先 STATUS，其次 CMD
-  states.value.xraygate200 = !!(d.lightGate200Status ?? d.xraygate200 ?? d.lightgate200 ?? d.xrayGate200Cmd ?? d.xraygate200_cmd)
-  states.value.xraygate160 = !!(d.lightGate160Status ?? d.xraygate160 ?? d.lightgate160 ?? d.xrayGate160Cmd ?? d.xraygate160_cmd)
+  states.value.xraygate200 = !!(d.lightGate200Status ?? d.xraygate200 ?? d.xrayGate200Cmd)
+  states.value.xraygate160 = !!(d.lightGate160Status ?? d.xraygate160 ?? d.xrayGate160Cmd)
   states.value.xraymotorreset200 = !!(d.xrayMotorRest200Cmd ?? d.xraymotorreset200)
   states.value.xraymotorreset160 = !!(d.xrayMotorRest160Cmd ?? d.xraymotorreset160)
   // STATUS 只读反馈
@@ -135,24 +135,40 @@ function onSysMenuDocClick() {
   sysMenuOpen.value = false
 }
 
+/** 打开期间 500ms 拉一次后端缓存的 DEVICE 状态（发令后设备未动也能回弹） */
+let statusPollTimer: ReturnType<typeof setInterval> | null = null
+let unsubPlcStatus: (() => void) | null = null
+
+async function refreshPlcStatus() {
+  try {
+    const res = await request<Record<string, unknown> | null>('/device/plc-status')
+    if (res.data && typeof res.data === 'object') applyStatus(res.data)
+  } catch {
+    /* 无缓存 / 网络抖动时忽略 */
+  }
+}
+
 onMounted(() => {
   // 先回放缓存，再订阅读取；DEVICE 相同寄存器只推一次，晚开面板会全灰
   if (wsStore.lastPlcStatus) {
     applyStatus(wsStore.lastPlcStatus)
   }
-  void request<Record<string, unknown> | null>('/device/plc-status')
-    .then((res) => {
-      if (res.data && typeof res.data === 'object') applyStatus(res.data)
-    })
-    .catch(() => {
-      /* 无缓存时忽略 */
-    })
-  wsStore.subscribe('plc_status', onWsPlcStatus)
+  void refreshPlcStatus()
+  statusPollTimer = setInterval(() => {
+    void refreshPlcStatus()
+  }, 500)
+  unsubPlcStatus = wsStore.subscribe('plc_status', onWsPlcStatus)
   document.addEventListener('click', onSysMenuDocClick)
 })
 
 onUnmounted(() => {
   document.removeEventListener('click', onSysMenuDocClick)
+  if (statusPollTimer != null) {
+    clearInterval(statusPollTimer)
+    statusPollTimer = null
+  }
+  unsubPlcStatus?.()
+  unsubPlcStatus = null
 })
 
 /** 点击开关：先弹确认，对齐 onBtnClicked */
