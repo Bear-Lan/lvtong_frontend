@@ -167,6 +167,7 @@ withDefaults(
   background: #fff;
   flex: 0 0 auto;
   margin-top: 0;
+  margin-bottom: 0;
 }
 
 .section {

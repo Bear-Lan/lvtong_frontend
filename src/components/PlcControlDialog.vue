@@ -56,24 +56,11 @@ const controlSwitches: SwitchItem[] = [
   { key: 'xraygate200', field: 'xraygate200', label: '200光闸', tipOn: '200光闸打开 ?', tipOff: '200光闸关闭 ?' },
   // Qt 原文确认语为「2000InterLock…」
   { key: 'interlock200', field: 'interlock200', label: '200InterLock', tipOn: '2000InterLock打开 ?', tipOff: '2000InterLock关闭 ?' },
-  { key: 'xraymotorreset200', field: 'xraymotorreset200', label: '200伺服复位', tipOn: '200伺服打开 ?', tipOff: '200伺服关闭 ?' },
-  { key: 'xraymotorreset160', field: 'xraymotorreset160', label: '160伺服复位', tipOn: '160伺服复位 ?', tipOff: '160伺服关闭 ?' },
   { key: 'soundalarm', field: 'soundalarm', label: '声音报警', tipOn: '声音报警打开 ?', tipOff: '声音报警关闭 ?' },
 ]
 
-/** STATUS 反馈（此前解析已有、面板未显示） */
-const statusSwitches: SwitchItem[] = [
-  { key: 'booking', field: 'booking', label: '预约', readonly: true },
-  { key: 'stickdown', field: 'stickdown', label: '栏杆限位', readonly: true },
-  { key: 'groundsensor', field: 'groundsensor', label: '地感', readonly: true },
-  { key: 'lightscreen', field: 'lightscreen', label: '光幕', readonly: true },
-  { key: 'gatemotor200', field: 'gatemotor200', label: '200伺服状态', readonly: true },
-  { key: 'gatemotor160', field: 'gatemotor160', label: '160伺服状态', readonly: true },
-  { key: 'lightsource200', field: 'lightsource200', label: '200光源', readonly: true },
-  { key: 'lightsource160', field: 'lightsource160', label: '160光源', readonly: true },
-]
-
-const switches: SwitchItem[] = [...controlSwitches, ...statusSwitches]
+/** 暂不展示 STATUS 反馈区；面板只保留可下发控制项 */
+const switches: SwitchItem[] = controlSwitches
 
 const states = ref<Record<string, boolean>>({
   urgentstop: false,
@@ -85,21 +72,11 @@ const states = ref<Record<string, boolean>>({
   interlock160: false,
   xraygate200: false,
   interlock200: false,
-  xraymotorreset200: false,
-  xraymotorreset160: false,
   soundalarm: false,
-  booking: false,
-  stickdown: false,
-  groundsensor: false,
-  lightscreen: false,
-  gatemotor200: false,
-  gatemotor160: false,
-  lightsource200: false,
-  lightsource160: false,
 })
 
 function applyStatus(d: Record<string, unknown>) {
-  // 对齐中间件 ST_* / parse_dev_bits 字段
+  // 对齐中间件 ST_* / parse_dev_bits；目前只回弹控制项（status=FFFF 时信 cmd）
   states.value.redlight = !!(d.redLightCmd ?? d.redlight ?? d.red)
   states.value.yellowlight = !!(d.yellowLightCmd ?? d.yellowlight ?? d.yellow)
   states.value.greenlight = !!(d.greenLightCmd ?? d.greenlight ?? d.green)
@@ -107,22 +84,9 @@ function applyStatus(d: Record<string, unknown>) {
   states.value.soundalarm = !!(d.soundalarmCmd ?? d.soundalarm)
   states.value.interlock160 = !!(d.interlock160Cmd ?? d.interlock160)
   states.value.interlock200 = !!(d.interlock200Cmd ?? d.interlock200)
-  // 急停：优先 STATUS，其次 CMD
   states.value.urgentstop = !!(d.urgentStopStatus ?? d.urgentstop ?? d.urgentStopCmd)
-  // 光闸：优先 STATUS，其次 CMD
   states.value.xraygate200 = !!(d.lightGate200Status ?? d.xraygate200 ?? d.xrayGate200Cmd)
   states.value.xraygate160 = !!(d.lightGate160Status ?? d.xraygate160 ?? d.xrayGate160Cmd)
-  states.value.xraymotorreset200 = !!(d.xrayMotorRest200Cmd ?? d.xraymotorreset200)
-  states.value.xraymotorreset160 = !!(d.xrayMotorRest160Cmd ?? d.xraymotorreset160)
-  // STATUS 只读反馈
-  states.value.booking = !!(d.bookingStatus ?? d.booking)
-  states.value.stickdown = !!(d.stickDownStatus ?? d.stickdown)
-  states.value.groundsensor = !!(d.groundSensorStatus ?? d.groundsensor)
-  states.value.lightscreen = !!(d.lightScreenStatus ?? d.lightscreen)
-  states.value.gatemotor200 = !!(d.gateMotor200Status ?? d.gatemotor200)
-  states.value.gatemotor160 = !!(d.gateMotor160Status ?? d.gatemotor160)
-  states.value.lightsource200 = !!(d.lightSource200Status ?? d.lightsource200)
-  states.value.lightsource160 = !!(d.lightSource160Status ?? d.lightsource160)
 }
 
 function onWsPlcStatus(msg: { data?: unknown }) {
@@ -227,20 +191,21 @@ function onSysClose() {
   emit('close')
 }
 
-/** 对齐 LvTongPro::onPlcControl：move(btn.mapToGlobal(0, height)) */
+/** 对齐 LvTongPro::onPlcControl：move(btn.mapToGlobal(0, height))；高度随开关条数收缩 */
 const dialogStyle = computed(() => {
   const left = props.anchor?.left ?? 0
   const top = props.anchor?.top ?? 72
   const w = 176
-  const h = Math.min(460, Math.max(120, window.innerHeight - 16))
-  // 避免贴边溢出视口
+  // 仅限制最大高度，避免矮屏溢出；实际高度由内容决定
+  const maxH = Math.min(460, Math.max(120, window.innerHeight - 16))
   const maxLeft = Math.max(0, window.innerWidth - w - 4)
-  const maxTop = Math.max(0, window.innerHeight - h - 4)
+  const maxTop = Math.max(0, window.innerHeight - 80)
   return {
     left: `${Math.min(Math.max(0, left), maxLeft)}px`,
     top: `${Math.min(Math.max(0, top), maxTop)}px`,
     width: `${w}px`,
-    height: `${h}px`,
+    height: 'auto',
+    maxHeight: `${maxH}px`,
   }
 })
 </script>
@@ -281,36 +246,28 @@ const dialogStyle = computed(() => {
       </div>
 
       <div class="dialog-body">
-        <template v-for="(item, idx) in switches" :key="item.key">
-          <div
-            v-if="idx === controlSwitches.length"
-            class="status-sep"
-            title="现场 STATUS 反馈（只读）"
+        <div
+          v-for="item in switches"
+          :key="item.key"
+          class="switch-row"
+        >
+          <span class="switch-label">{{ item.label }}</span>
+          <button
+            type="button"
+            class="switch-btn"
+            :class="{ 'is-loading': loadingKey === item.key }"
+            :title="item.label"
+            :disabled="loadingKey !== null"
+            @click="onSwitchClick(item)"
           >
-            状态反馈
-          </div>
-          <div class="switch-row" :class="{ 'is-readonly': item.readonly }">
-            <span class="switch-label">{{ item.label }}</span>
-            <button
-              type="button"
-              class="switch-btn"
-              :class="{
-                'is-loading': loadingKey === item.key,
-                'is-readonly': item.readonly,
-              }"
-              :title="item.readonly ? `${item.label}（只读）` : item.label"
-              :disabled="item.readonly || loadingKey !== null"
-              @click="onSwitchClick(item)"
-            >
-              <span v-if="loadingKey === item.key" class="switch-spinner" aria-label="加载中" />
-              <img
-                v-else
-                :src="states[item.field] ? '/assets/img/plcctrl_open.png' : '/assets/img/plcctrl_close.png'"
-                :alt="states[item.field] ? '开' : '关'"
-              />
-            </button>
-          </div>
-        </template>
+            <span v-if="loadingKey === item.key" class="switch-spinner" aria-label="加载中" />
+            <img
+              v-else
+              :src="states[item.field] ? '/assets/img/plcctrl_open.png' : '/assets/img/plcctrl_close.png'"
+              :alt="states[item.field] ? '开' : '关'"
+            />
+          </button>
+        </div>
       </div>
 
       <!-- 对齐 QMessageBox::question(this, "系统提醒", tipTxt, Yes|No) -->
@@ -349,7 +306,7 @@ const dialogStyle = computed(() => {
   background: transparent;
 }
 
-/* 定位由 anchor 决定；高度随 STATUS 行增加，可滚动 */
+/* 定位由 anchor 决定；高度随开关条数收缩，不再固定撑满 */
 .plc-dialog {
   position: fixed;
   box-sizing: border-box;
@@ -360,6 +317,7 @@ const dialogStyle = computed(() => {
   display: flex;
   flex-direction: column;
   overflow: hidden;
+  height: auto;
 }
 
 .dialog-titlebar {
@@ -463,7 +421,7 @@ const dialogStyle = computed(() => {
 }
 
 .dialog-body {
-  flex: 1;
+  flex: 0 0 auto;
   margin: 2px 4px 4px;
   padding: 2px 6px;
   border: 1px solid #c8c8c8;

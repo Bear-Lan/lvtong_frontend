@@ -2816,6 +2816,8 @@ const anyDialogOpen = computed(
   display: flex;
   flex-direction: column;
   overflow: hidden;
+  /* 去掉 panel-card 底边 1px margin，避免状态栏下露灰缝 */
+  margin-bottom: 0;
 }
 
 .panel-video {
@@ -2831,6 +2833,7 @@ const anyDialogOpen = computed(
 .panel-form {
   flex: 5;
   min-height: 0;
+  margin-bottom: 0;
 }
 
 .panel-header,
