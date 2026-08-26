@@ -764,6 +764,26 @@ type CaptureKey = (typeof captureButtons)[number]['key']
 /** 缩略图槽位：采集按钮 + 通行码图（非按钮） */
 type ThumbKey = CaptureKey | 'passcode'
 
+/** 货物/证据主页缩略：最多展示 6 张，按张数排布 */
+function multiCaptureThumbs(key: 'goods' | 'evidence'): string[] {
+  return (captureLists.value[key] || []).filter(Boolean).slice(0, 6)
+}
+
+function multiCaptureThumbClass(key: 'goods' | 'evidence'): string {
+  const n = multiCaptureThumbs(key).length
+  return n > 0 ? `n-${n}` : ''
+}
+
+function captureBtnHasThumb(key: CaptureKey): boolean {
+  if (key === 'license') {
+    return !!(licensePaths.value.license || licensePaths.value.licenseGc)
+  }
+  if (key === 'goods' || key === 'evidence') {
+    return (captureLists.value[key] || []).length > 0
+  }
+  return !!captureThumbs.value[key]
+}
+
 const captureDialog = ref<CaptureKind | null>(null)
 const showLicenseDialog = ref(false)
 
@@ -2116,18 +2136,26 @@ function setupWS() {
         licensePaths.value.license || licensePaths.value.licenseGc || ''
     }
 
-    // 货物图（多张，| 分隔 — 对齐 Qt getGoodImgListPath()）
+    // 货物图（多张，| 分隔 — 手机多次上传追加，不覆盖）
     if (data.goods_image_path) {
       const urls = data.goods_image_path.split('|').filter(Boolean).map(toImageUrl)
-      captureLists.value.goods = urls
-      captureThumbs.value.goods = urls[0] || ''
+      const next = [...(captureLists.value.goods || []), ...urls]
+      captureLists.value = { ...captureLists.value, goods: next }
+      captureThumbs.value = {
+        ...captureThumbs.value,
+        goods: next[next.length - 1] || '',
+      }
     }
 
-    // 证据照（多张，| 分隔 — 对齐 Qt getEvidenceListPath()）
+    // 证据照（多张，| 分隔 — 手机多次上传追加，不覆盖）
     if (data.evidences_image_path) {
       const urls = data.evidences_image_path.split('|').filter(Boolean).map(toImageUrl)
-      captureLists.value.evidence = urls
-      captureThumbs.value.evidence = urls[0] || ''
+      const next = [...(captureLists.value.evidence || []), ...urls]
+      captureLists.value = { ...captureLists.value, evidence: next }
+      captureThumbs.value = {
+        ...captureThumbs.value,
+        evidence: next[next.length - 1] || '',
+      }
     }
 
     // 业务字段 — 对齐 Qt ui.lineEdit_phone / ui.lineEdit_plate_gc / ui.lineEdit_goods
@@ -2516,12 +2544,12 @@ const anyDialogOpen = computed(
               type="button"
               class="capture-btn"
               :class="{
-                'has-thumb':
-                  btn.key === 'license'
-                    ? !!(licensePaths.license || licensePaths.licenseGc)
-                    : !!captureThumbs[btn.key],
+                'has-thumb': captureBtnHasThumb(btn.key),
                 'license-split':
                   btn.key === 'license' && !!(licensePaths.license || licensePaths.licenseGc),
+                'multi-thumbs-btn':
+                  (btn.key === 'goods' || btn.key === 'evidence') &&
+                  multiCaptureThumbs(btn.key).length > 0,
               }"
               :title="btn.label"
               @click="onCaptureClick(btn.key)"
@@ -2538,6 +2566,21 @@ const anyDialogOpen = computed(
                   </div>
                 </div>
               </template>
+              <div
+                v-else-if="
+                  (btn.key === 'goods' || btn.key === 'evidence') &&
+                  multiCaptureThumbs(btn.key).length > 0
+                "
+                class="multi-thumbs"
+                :class="multiCaptureThumbClass(btn.key)"
+              >
+                <img
+                  v-for="(src, idx) in multiCaptureThumbs(btn.key)"
+                  :key="`${btn.key}-${idx}-${src.slice(-12)}`"
+                  :src="src"
+                  :alt="`${btn.label}${idx + 1}`"
+                />
+              </div>
               <img
                 v-else-if="captureThumbs[btn.key]"
                 :src="captureThumbs[btn.key]"
@@ -3203,6 +3246,66 @@ const anyDialogOpen = computed(
   object-fit: contain;
   display: block;
   background: #1a1a1a;
+}
+
+.capture-btn.multi-thumbs-btn {
+  padding: 0;
+}
+
+/* 货物/证据：格内最多 6 张，无滚动；排布按张数 */
+.multi-thumbs {
+  display: grid;
+  width: 100%;
+  height: 100%;
+  gap: 1px;
+  background: #1a1a1a;
+  overflow: hidden;
+  box-sizing: border-box;
+
+  img {
+    width: 100%;
+    height: 100%;
+    min-width: 0;
+    min-height: 0;
+    object-fit: cover;
+    display: block;
+    background: #1a1a1a;
+  }
+
+  /* 1～3：单排 */
+  &.n-1 {
+    grid-template-columns: 1fr;
+    grid-template-rows: 1fr;
+  }
+  &.n-2 {
+    grid-template-columns: 1fr 1fr;
+    grid-template-rows: 1fr;
+  }
+  &.n-3 {
+    grid-template-columns: 1fr 1fr 1fr;
+    grid-template-rows: 1fr;
+  }
+  /* 4：2+2 */
+  &.n-4 {
+    grid-template-columns: 1fr 1fr;
+    grid-template-rows: 1fr 1fr;
+  }
+  /* 5：第一行 2，第二行 3 */
+  &.n-5 {
+    grid-template-columns: repeat(6, 1fr);
+    grid-template-rows: 1fr 1fr;
+
+    img:nth-child(1) { grid-column: 1 / 4; }
+    img:nth-child(2) { grid-column: 4 / 7; }
+    img:nth-child(3) { grid-column: 1 / 3; }
+    img:nth-child(4) { grid-column: 3 / 5; }
+    img:nth-child(5) { grid-column: 5 / 7; }
+  }
+  /* 6（及更多只显示前 6）：3+3 */
+  &.n-6 {
+    grid-template-columns: 1fr 1fr 1fr;
+    grid-template-rows: 1fr 1fr;
+  }
 }
 
 .capture-btn.license-split {

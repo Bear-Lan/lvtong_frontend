@@ -452,9 +452,10 @@ function isBlank(v: unknown): boolean {
 
 /**
  * 提交确认校验。
- * 可空：备注内容、查验依据、复核、证件照、满载率。
+ * 可空：备注内容、查验依据、复核、满载率；图片中车顶/透视/证据/雷达图可空。
  * 交易支付方式显示「未知」也算有值。
- * 其余表单字段必填；图片（不含证件照）至少一张。
+ * 其余表单字段必填。
+ * 图片：单张类型必须有；可多张类型至少一张（货物）；车顶/透视/证据/雷达可空。
  * 注：备注内容界面标 * 仅强调重要，业务上仍可空。
  */
 function validateSubmitConfirm(): string | null {
@@ -503,17 +504,18 @@ function validateSubmitConfirm(): string | null {
     missing.push('不合格类型')
   }
 
-  // 图片：证件照可空；车头/车尾/车顶/车身/透视/货物/证据/通行码 至少一张
-  const imageOk =
-    hasRealImage(r.head_image_path) ||
-    hasRealImage(r.tail_image_path) ||
-    hasRealImage(r.top_image_path) ||
-    hasRealImage(r.body_image_path) ||
-    hasRealImage(r.transparent_image_path) ||
-    hasRealImage(r.pass_code_image_path) ||
-    splitImagePaths(r.goods_image_path).some((p) => hasRealImage(p)) ||
-    splitImagePaths(r.evidences_image_path).some((p) => hasRealImage(p))
-  if (!imageOk) missing.push('图片(至少一张，证件照除外)')
+  // 图片：
+  // 可空 — 车顶、透视、证据、雷达侧/顶/头
+  // 单张必有 — 车头、车尾、车身、行驶证、通行码（通行码已在上面校验）
+  // 多张至少一张 — 货物
+  need('车头', hasRealImage(r.head_image_path))
+  need('车尾', hasRealImage(r.tail_image_path))
+  need('车身', hasRealImage(r.body_image_path))
+  need('行驶证', hasRealImage(r.license_image_path))
+  need(
+    '货物照片',
+    splitImagePaths(r.goods_image_path).some((p) => hasRealImage(p)),
+  )
 
   if (!missing.length) return null
   return `请完善后再提交：${missing.join('、')}`
