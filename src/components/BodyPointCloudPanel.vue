@@ -5,18 +5,28 @@
  * - 车顶/车侧：额外支持拖竖线测距
  * - 不做暗化、不做保存
  */
-import { computed, nextTick, onUnmounted, reactive, ref, watch } from 'vue'
+import { computed, nextTick, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
 
 export type BodyPcView = 'body' | 'top' | 'side'
 
 const props = defineProps<{
   imageUrl?: string
+  /** 成对原图对应的预览 temp URL；缺省用 imageUrl（车身）；透视色阶后仍指向源 temp */
+  sourceTempUrl?: string
   view: BodyPcView
   placeholder?: string
 }>()
 
+export type CropBoxPayload = {
+  x1: number
+  y1: number
+  x2: number
+  y2: number
+  sourceTempUrl: string
+}
+
 const emit = defineEmits<{
-  crop: [dataUrl: string]
+  crop: [payload: CropBoxPayload]
 }>()
 
 const PIXEL_TO_METER = 0.01
@@ -264,6 +274,10 @@ function onImgLoad() {
   imgW.value = img.naturalWidth
   imgH.value = img.naturalHeight
   clearBoxes()
+  nextTick(() => {
+    updateFitSize()
+    bindFitResize()
+  })
 
   if (!canMeasure.value) {
     index.value = null
@@ -314,123 +328,45 @@ function isNearLine(clientX: number) {
   return Math.abs(clientX - rect.left - lineX) <= HIT_PX
 }
 
-function drawOverlaysOnCanvas(ctx: CanvasRenderingContext2D) {
-  const w = imgW.value
-  const h = imgH.value
-
-  if (canMeasure.value) {
-    const lineX = Math.round(linePosition.value * w)
-
-    const lineW = Math.max(2, Math.round(w / 450))
-    ctx.fillStyle = '#ff3030'
-    ctx.fillRect(lineX - Math.floor(lineW / 2), 0, lineW, h)
-
-    const span = spanAtLine(lineX)
-    if (span) {
-      const tickW = Math.max(10, Math.round(w / 80))
-      ctx.fillStyle = '#ffcf5a'
-      ctx.fillRect(lineX - tickW / 2, span.minY - 1, tickW, 2)
-      ctx.fillRect(lineX - tickW / 2, span.maxY - 1, tickW, 2)
-    }
-
-    const r = Math.max(4, Math.round(h / 50))
-    ctx.beginPath()
-    ctx.arc(lineX, h / 2, r, 0, Math.PI * 2)
-    ctx.fillStyle = '#fff'
-    ctx.fill()
-    ctx.lineWidth = 2
-    ctx.strokeStyle = '#ff3030'
-    ctx.stroke()
-
-    const fontSize = Math.max(14, Math.round(h / 20))
-    ctx.font = `650 ${fontSize}px "Microsoft YaHei","Segoe UI",sans-serif`
-    const rows = [
-      `${spanLabel.value}  ${measure.span}`,
-      `线→车头  ${measure.toHead}`,
-      `车长  ${measure.length}`,
-    ]
-    const padX = 10
-    const padY = 8
-    const lineH = fontSize * 1.45
-    let maxTw = 0
-    for (const t of rows) maxTw = Math.max(maxTw, ctx.measureText(t).width)
-    const panelW = maxTw + padX * 2
-    const panelH = rows.length * lineH + padY * 2
-    const flip = linePosition.value > 0.72
-    const panelX = flip ? lineX - 10 - panelW : lineX + 10
-    const panelY = Math.round(h / 2 - panelH / 2)
-
-    ctx.fillStyle = 'rgba(8, 22, 18, 0.88)'
-    ctx.strokeStyle = 'rgba(95, 187, 158, 0.55)'
-    ctx.lineWidth = 1
-    ctx.beginPath()
-    if (typeof ctx.roundRect === 'function') {
-      ctx.roundRect(panelX, panelY, panelW, panelH, 6)
-    } else {
-      ctx.rect(panelX, panelY, panelW, panelH)
-    }
-    ctx.fill()
-    ctx.stroke()
-
-    ctx.fillStyle = '#5fbb9e'
-    rows.forEach((t, i) => {
-      ctx.fillText(t, panelX + padX, panelY + padY + (i + 0.8) * lineH)
-    })
-  }
-
-  const boxStroke = Math.max(2, Math.round(Math.min(w, h) / 200))
-  const tagFont = Math.max(12, Math.round(h / 24))
-  ctx.font = `${tagFont}px "Microsoft YaHei","Segoe UI",sans-serif`
-  for (const box of boxes.value) {
-    ctx.strokeStyle = box.id === selectedBoxId.value ? '#ffcf5a' : '#ff3030'
-    ctx.lineWidth = boxStroke
-    ctx.strokeRect(box.x1 + 0.5, box.y1 + 0.5, box.x2 - box.x1, box.y2 - box.y1)
-    if (box.label) {
-      const tw = ctx.measureText(box.label).width
-      const th = tagFont
-      const tx = box.x1
-      let ty = box.y1 - th - 8
-      if (ty < 0) ty = box.y1 + 2
-      ctx.fillStyle = 'rgba(8, 22, 18, 0.88)'
-      ctx.fillRect(tx, ty, tw + 10, th + 6)
-      ctx.fillStyle = '#5fbb9e'
-      ctx.fillText(box.label, tx + 5, ty + th)
-    }
-  }
-}
-
-async function cropBoxToDataUrl(box: Box): Promise<string> {
-  const img = imgRef.value
-  if (!img || imgW.value <= 0) throw new Error('无图像')
-  const bw = box.x2 - box.x1
-  const bh = box.y2 - box.y1
-  if (bw <= 0 || bh <= 0) throw new Error('无效框')
-
-  const full = document.createElement('canvas')
-  full.width = imgW.value
-  full.height = imgH.value
-  const fctx = full.getContext('2d')
-  if (!fctx) throw new Error('canvas 不可用')
-  fctx.drawImage(img, 0, 0, imgW.value, imgH.value)
-  drawOverlaysOnCanvas(fctx)
-
-  const out = document.createElement('canvas')
-  out.width = bw
-  out.height = bh
-  const octx = out.getContext('2d')
-  if (!octx) throw new Error('canvas 不可用')
-  octx.drawImage(full, box.x1, box.y1, bw, bh, 0, 0, bw, bh)
-
-  return out.toDataURL('image/jpeg', 0.92)
-}
-
 async function emitCrop(box: Box) {
-  try {
-    const dataUrl = await cropBoxToDataUrl(box)
-    emit('crop', dataUrl)
-  } catch (err) {
-    console.error('[BodyPointCloudPanel] 裁切失败', err)
+  const sourceTempUrl = (props.sourceTempUrl || props.imageUrl || '').trim()
+  if (!sourceTempUrl.startsWith('/api/temp-images/')) {
+    console.error('[BodyPointCloudPanel] sourceTempUrl 不是 temp 预览，无法原图裁切:', sourceTempUrl)
+    return
   }
+  emit('crop', {
+    x1: box.x1,
+    y1: box.y1,
+    x2: box.x2,
+    y2: box.y2,
+    sourceTempUrl,
+  })
+}
+
+/** 等比放大铺满 stage（可放大可缩小，不超过容器），保证 .fit 与可见图同尺寸以便框图对齐 */
+function updateFitSize() {
+  const stage = stageRef.value
+  const fit = fitRef.value
+  if (!stage || !fit || imgW.value <= 0 || imgH.value <= 0) return
+  const sw = stage.clientWidth
+  const sh = stage.clientHeight
+  if (sw <= 0 || sh <= 0) return
+  const scale = Math.min(sw / imgW.value, sh / imgH.value)
+  const w = Math.max(1, Math.floor(imgW.value * scale))
+  const h = Math.max(1, Math.floor(imgH.value * scale))
+  fit.style.width = `${w}px`
+  fit.style.height = `${h}px`
+}
+
+let fitResizeObserver: ResizeObserver | null = null
+
+function bindFitResize() {
+  fitResizeObserver?.disconnect()
+  fitResizeObserver = null
+  const stage = stageRef.value
+  if (!stage || typeof ResizeObserver === 'undefined') return
+  fitResizeObserver = new ResizeObserver(() => updateFitSize())
+  fitResizeObserver.observe(stage)
 }
 
 function onPointerDown(e: PointerEvent) {
@@ -515,11 +451,23 @@ watch(
     await nextTick()
     if (imgRef.value?.complete && imgRef.value.naturalWidth > 0) {
       onImgLoad()
+    } else {
+      const fit = fitRef.value
+      if (fit) {
+        fit.style.width = ''
+        fit.style.height = ''
+      }
     }
   },
 )
 
+onMounted(() => {
+  bindFitResize()
+})
+
 onUnmounted(() => {
+  fitResizeObserver?.disconnect()
+  fitResizeObserver = null
   resetState()
 })
 
@@ -645,17 +593,15 @@ defineExpose({
 
 .fit {
   position: relative;
-  max-width: 100%;
-  max-height: 100%;
   line-height: 0;
+  flex-shrink: 0;
 }
 
 .body-image {
   display: block;
-  max-width: 100%;
-  max-height: 100%;
-  width: auto;
-  height: auto;
+  width: 100%;
+  height: 100%;
+  object-fit: fill;
   pointer-events: none;
 }
 

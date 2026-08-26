@@ -816,25 +816,65 @@ function reconnectLiveVideo() {
   void startLiveVideo()
 }
 
-/** 框图裁切预览（叠在 WebRTC 视频之上；来自车身/透视框图） */
+/** 框图裁切预览（叠在 WebRTC 视频之上；来自车身/透视框图 → 后端原图裁切） */
 const liveCropPreviewUrl = ref('')
 const bodyPcPanelRef = ref<{ clearBoxes: () => void } | null>(null)
 const xrayBoxPanelRef = ref<{ clearBoxes: () => void } | null>(null)
+let cropReqSeq = 0
 
-function onBodyBoxCrop(dataUrl: string) {
-  liveCropPreviewUrl.value = dataUrl
+type CropBoxPayload = {
+  x1: number
+  y1: number
+  x2: number
+  y2: number
+  sourceTempUrl: string
 }
 
-function onXrayBoxCrop(dataUrl: string) {
-  liveCropPreviewUrl.value = dataUrl
+async function requestOriginalCrop(payload: CropBoxPayload): Promise<string> {
+  const res = await request<{ url: string }>('/temp-images/crop', {
+    method: 'POST',
+    body: JSON.stringify({
+      previewUrl: payload.sourceTempUrl,
+      x1: payload.x1,
+      y1: payload.y1,
+      x2: payload.x2,
+      y2: payload.y2,
+    }),
+  })
+  if (res.code !== 0 || !res.data?.url) {
+    throw new Error(res.message || '原图裁切失败')
+  }
+  return res.data.url
 }
 
-/** 「勾」：用户确认把当前右侧预览的框图保存到货物图列表。
- *  - dataUrl 是 base64（来自 BodyPointCloudPanel/@crop），先原样入 captureLists.goods
- *    让 UI 立即可见；提交时会由 onSubmitConfirmYes 通过 imagePath 工具归一或上传
- *  - 同步刷新 captureThumbs.goods（最后一张作为缩略图）
- *  - 顺手清掉预览区，回到正常实时视频占位
- *  - 注意：不对 MJPEG 直播帧做截帧，裁切仅来自车身/透视框图
+async function onBodyBoxCrop(payload: CropBoxPayload) {
+  xrayBoxPanelRef.value?.clearBoxes()
+  const seq = ++cropReqSeq
+  try {
+    const url = await requestOriginalCrop(payload)
+    if (seq !== cropReqSeq) return
+    liveCropPreviewUrl.value = url
+  } catch (e) {
+    console.error('[Dashboard] 车身原图裁切失败', e)
+  }
+}
+
+async function onXrayBoxCrop(payload: CropBoxPayload) {
+  bodyPcPanelRef.value?.clearBoxes()
+  const seq = ++cropReqSeq
+  try {
+    const url = await requestOriginalCrop(payload)
+    if (seq !== cropReqSeq) return
+    liveCropPreviewUrl.value = url
+  } catch (e) {
+    console.error('[Dashboard] 透视原图裁切失败', e)
+  }
+}
+
+/** 「勾」：确认把当前右侧原图裁切保存到货物图列表。
+ *  - url 为 /api/temp-images/<id>（原图分辨率裁块），提交时 persist 落库
+ *  - 同步刷新 captureThumbs.goods
+ *  - 清预览与两侧框
  */
 function onConfirmCropToGoods() {
   if (!liveCropPreviewUrl.value) return
@@ -842,16 +882,16 @@ function onConfirmCropToGoods() {
   captureLists.value = { ...captureLists.value, goods: next }
   captureThumbs.value = { ...captureThumbs.value, goods: next[next.length - 1] || '' }
   liveCropPreviewUrl.value = ''
+  bodyPcPanelRef.value?.clearBoxes()
+  xrayBoxPanelRef.value?.clearBoxes()
   console.info('[Dashboard] 框图已保存到货物图:', next.length)
 }
 
-function onDeleteBodyBoxes() {
+/** 「×」：清除框图预览 + 车身/透视上的框 */
+function onDeleteCropBoxes() {
+  cropReqSeq++
   liveCropPreviewUrl.value = ''
   bodyPcPanelRef.value?.clearBoxes()
-}
-
-function onDeleteXrayBoxes() {
-  liveCropPreviewUrl.value = ''
   xrayBoxPanelRef.value?.clearBoxes()
 }
 const showVideoHint = computed(() => true)
@@ -2304,7 +2344,6 @@ const anyDialogOpen = computed(
             <img src="/assets/img/a_car.png" class="panel-icon" alt="" />
             <span class="panel-title">车身影像</span>
             <span class="header-spacer" aria-hidden="true" />
-            <PreviewButton label="删除框图" title="删除框选图" @click="onDeleteBodyBoxes" />
             <span class="xray-meta">{{ bodyViewLabel }}：</span>
             <button type="button" class="header-icon-btn header-icon-swap" title="切换视角" @click="onBodyViewSwap">
               <img src="/assets/img/a_leftright.png" alt="" />
@@ -2314,6 +2353,7 @@ const anyDialogOpen = computed(
             ref="bodyPcPanelRef"
             placeholder="车身影像"
             :image-url="bodyImageUrl || undefined"
+            :source-temp-url="bodyImageUrl || undefined"
             :view="bodyView"
             @crop="onBodyBoxCrop"
           />
@@ -2359,7 +2399,6 @@ const anyDialogOpen = computed(
                 </li>
               </ul>
             </div>
-            <PreviewButton label="删除框图" title="删除框选图" @click="onDeleteXrayBoxes" />
             <PreviewButton label="删除" title="不合格透视图删除" @click="onTransDelClick" />
             <PreviewButton
               label="渲染"
@@ -2376,6 +2415,7 @@ const anyDialogOpen = computed(
             ref="xrayBoxPanelRef"
             placeholder="透视影像"
             :image-url="xrayDisplayUrl || undefined"
+            :source-temp-url="transparentImageUrl || undefined"
             view="body"
             @crop="onXrayBoxCrop"
           />
@@ -2426,15 +2466,27 @@ const anyDialogOpen = computed(
             >
               <img src="/assets/img/good_save.png" alt="" />
             </button>
+            <button
+              type="button"
+              class="header-icon-btn"
+              :class="{ disabled: !liveCropPreviewUrl }"
+              :title="liveCropPreviewUrl ? '删除框图' : '当前无框图'"
+              :disabled="!liveCropPreviewUrl"
+              @click="onDeleteCropBoxes"
+            >
+              <img src="/assets/img/s_close.png" alt="" />
+            </button>
           </div>
           <div class="video-area">
             <video
               ref="liveVideoRef"
               class="live-webrtc"
+              :class="{ 'is-obscured': !!liveCropPreviewUrl }"
               muted
               autoplay
               playsinline
             />
+            <div v-if="liveCropPreviewUrl" class="video-crop-backdrop" aria-hidden="true" />
             <img
               v-if="liveCropPreviewUrl"
               :src="liveCropPreviewUrl"
@@ -3060,21 +3112,29 @@ const anyDialogOpen = computed(
   object-fit: contain;
   background: #1a1a1a;
   z-index: 1;
+
+  &.is-obscured {
+    visibility: hidden;
+  }
+}
+
+.video-crop-backdrop {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  background: #1a1a1a;
+  pointer-events: none;
 }
 
 .video-crop-preview {
   position: absolute;
   inset: 0;
-  margin: auto;
-  max-width: 100%;
-  max-height: 100%;
-  width: auto;
-  height: auto;
+  width: 100%;
+  height: 100%;
   object-fit: contain;
-  z-index: 2;
+  object-position: center;
+  z-index: 3;
   pointer-events: none;
-  /* 盖住下层实时视频，避免半透明透出 */
-  background: #1a1a1a;
 }
 
 .video-status {
