@@ -10,7 +10,6 @@ import {
   defaultLinePositionAfterOrigin,
   envelopeFirstNumber,
   parseImageEnvelope,
-  toggleVehicleHeight,
   vehicleTypeFromRadarHeight,
 } from '../utils/bookingMath'
 
@@ -41,9 +40,14 @@ export function useBookingDialog() {
   const pendingConfirm = ref<BookingConfirmConfig | null>(null)
   const errorMessage = ref('')
 
-  const vehicleType = computed<VehicleSizeType>(() =>
-    vehicleTypeFromRadarHeight(vehicleHeight.value),
-  )
+  /** 弹窗车型：默认同步车高；用户点图标后以手动为准 */
+  const vehicleType = ref<VehicleSizeType>('big')
+  const vehicleTypeManual = ref(false)
+
+  function syncVehicleTypeFromHeight(height: number) {
+    if (vehicleTypeManual.value) return
+    vehicleType.value = vehicleTypeFromRadarHeight(height)
+  }
 
   const vehicleTypeIcon = computed(() =>
     vehicleType.value === 'big'
@@ -107,6 +111,8 @@ export function useBookingDialog() {
             originalImageWidth.value = data.originalImageWidth || 0
             if (data.vehicleHeight > 0) {
               vehicleHeight.value = data.vehicleHeight
+              // 车高>2.8 自动切大型；未手动改过时随高度同步
+              syncVehicleTypeFromHeight(data.vehicleHeight)
             }
 
             console.info(
@@ -172,6 +178,8 @@ export function useBookingDialog() {
     linePosition.value = 0.5
     carHeadLength.value = DEFAULT_HEAD_WIDTH
     vehicleHeight.value = 3.0
+    vehicleTypeManual.value = false
+    vehicleType.value = vehicleTypeFromRadarHeight(3.0)
     imageEnvelope.value = ''
     vehicleHeaderEnvelope.value = ''
     originalImageWidth.value = 0
@@ -200,9 +208,10 @@ export function useBookingDialog() {
     void radarPromise
   }
 
-  /** 对齐 onCarTypeClicked */
+  /** 手动切换大型/小型；之后不再被车高自动覆盖 */
   function toggleVehicleType() {
-    vehicleHeight.value = toggleVehicleHeight(vehicleHeight.value)
+    vehicleType.value = vehicleType.value === 'big' ? 'small' : 'big'
+    vehicleTypeManual.value = true
   }
 
   function requestConfirm(kind: keyof typeof CONFIRM_TEXT) {
@@ -220,6 +229,7 @@ export function useBookingDialog() {
     return {
       vehicleHeight: vehicleHeight.value,
       carHeadLength: carHeadLength.value,
+      vehicleType: vehicleType.value,
       xrayEnabled: xrayEnabled.value,
       linePosition: linePosition.value,
       radarHeadImageUrl: radarImageUrl.value || undefined,
@@ -271,6 +281,7 @@ export function useBookingDialog() {
     linePosition,
     vehicleHeight,
     carHeadLength,
+    vehicleType,
     xrayEnabled,
     confirmVisible,
     pendingConfirm,

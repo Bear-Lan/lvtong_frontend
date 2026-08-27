@@ -32,6 +32,11 @@ export interface BookingAcceptPayload {
   vehicleHeight: number
   /** 车头长度 m_carheadlength / m_carLength */
   carHeadLength: number
+  /**
+   * 预约弹窗车型（与图标一致）：small | big
+   * 光机 type：big → large，small → small；以后端收到的为准
+   */
+  vehicleType: VehicleSizeType
   /** X 光透视开关 */
   xrayEnabled: boolean
   /** 红线相对位置 0~1（后端可选用于调度修正） */
