@@ -54,6 +54,13 @@ function onAlertDone() {
 }
 
 onMounted(() => {
+  // 默认带入当前登录账号 / 会话密码 / 登录复核人
+  username.value = auth.user?.username || ''
+  password.value = auth.sessionPassword || ''
+  if (auth.reviewerPhone) {
+    reviewerPhone.value = auth.reviewerPhone
+  }
+
   try {
     const saved = localStorage.getItem('lvtong_change_usr')
     if (saved) {
@@ -63,9 +70,10 @@ onMounted(() => {
         reviewerPhone?: string
         remember?: boolean
       }
+      // 「记住我」覆盖默认登录态（本弹窗专用记忆）
       if (data.remember) {
-        username.value = data.username ?? ''
-        password.value = data.password ?? ''
+        username.value = data.username ?? username.value
+        password.value = data.password ?? password.value
         if (data.reviewerPhone) reviewerPhone.value = data.reviewerPhone
         remember.value = true
       }
@@ -119,8 +127,10 @@ function onConfirm() {
       realName: username.value,
       phone: username.value,
       role: auth.user?.role ?? 1,
+      groupId: auth.user?.groupId,
     },
     { phone: reviewer.phone, name: reviewer.name },
+    password.value,
   )
 
   showSuccess('查验与复核人员切换成功 ！')

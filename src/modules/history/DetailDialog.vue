@@ -11,6 +11,7 @@ import LicensePlateEdit from '@/components/LicensePlateEdit.vue'
 import QtMessageBox from '@/components/common/QtMessageBox.vue'
 import ImageGalleryDialog from '@/components/common/ImageGalleryDialog.vue'
 import type { GalleryItem } from '@/components/common/ImageGalleryDialog.vue'
+import { useAuthStore } from '@/stores/useAuthStore'
 import {
   fetchContainerTypes,
   fetchInspectionDetail,
@@ -114,6 +115,7 @@ const carHeight = ref('')
 const agriculturalRef = ref<InstanceType<typeof AgriculturalSelect> | null>(null)
 const plateRef = ref<InstanceType<typeof LicensePlateEdit> | null>(null)
 const goodsSelection = ref<{ productCode: string; varietyName: string; varietyNamePinYin: string }[]>([])
+const auth = useAuthStore()
 
 const showNoPass = computed(() => resultStatus.value === 1)
 
@@ -304,7 +306,12 @@ function applyRecord(data: InspectionDetail) {
   driverPhone.value = data.driver_phone || ''
   remark.value = data.history_record || ''
   inspectorPhone.value = data.inspector_phone || ''
-  reviewerPhone.value = data.reviewer_phone || ''
+  // 提交预览：优先预览数据，否则用登录/缓存复核人（刷新后 auth 内存可能空）
+  const cachedReviewer = isSubmitMode.value ? auth.resolveActiveReviewer() : { phone: '', name: '' }
+  reviewerPhone.value =
+    data.reviewer_phone ||
+    (isSubmitMode.value ? cachedReviewer.phone : '') ||
+    ''
   // DB 可能存 '' / '1'；下拉 option 是数字 1..5
   groupId.value = Number(data.group_id) || 0
   // 0=合格，1=不合格
@@ -318,6 +325,7 @@ async function loadDetail() {
     if (isSubmitMode.value) {
       if (props.preview) {
         applyRecord(props.preview)
+        ensureLoginReviewerInUsers()
         enStationName.value = await fetchStationName(props.preview.pass_code_en_station_id)
         exStationName.value = await fetchStationName(props.preview.pass_code_ex_station_id)
       } else {
@@ -359,6 +367,28 @@ async function loadDicts() {
   containerTypes.value = containers
   noPassTypes.value = nopass
   users.value = userList
+  ensureLoginReviewerInUsers()
+}
+
+/** 登录所选复核人若不在用户列表里，补一条以便下拉能显示 */
+function ensureLoginReviewerInUsers() {
+  const active = auth.resolveActiveReviewer()
+  const phone = (reviewerPhone.value || active.phone || '').trim()
+  if (!phone) return
+  // 同步下拉选中值（预览里可能空串，但缓存有）
+  if (!reviewerPhone.value && isSubmitMode.value) {
+    reviewerPhone.value = phone
+  }
+  const exists = users.value.some((u) => (u.phone || u.username) === phone)
+  if (exists) return
+  users.value = [
+    {
+      username: phone,
+      real_name: active.name || auth.reviewerName || phone,
+      phone,
+    },
+    ...users.value,
+  ]
 }
 
 function onSelectGoods() {

@@ -7,10 +7,10 @@ const router = useRouter()
 const auth = useAuthStore()
 
 const username = ref(auth.getRememberedUsername() || '')
-const password = ref('')
+const password = ref(auth.getRememberedPassword() || '')
 const remember = ref(auth.getRememberedUsername() !== '')
 const showPassword = ref(false)
-const reviewerPhone = ref('18627774208')
+const reviewerPhone = ref(auth.getRememberedReviewerPhone() || '18627774208')
 const errorMsg = ref('')
 const submitting = ref(false)
 

@@ -1638,6 +1638,7 @@ function buildSubmitPreview(): InspectionDetail {
     .join('|')
   const pc = passcode.value?.valid ? passcode.value : null
   const exitWeight = resolveExitWeight()
+  const activeReviewer = auth.resolveActiveReviewer()
 
   return {
     id: 0,
@@ -1674,7 +1675,8 @@ function buildSubmitPreview(): InspectionDetail {
     pass_code_image_path: toApiUrl(captureThumbs.value.passcode || '') || undefined,
     operator_name: auth.user?.realName || '',
     inspector_phone: auth.user?.phone || '',
-    reviewer_phone: '',
+    reviewer_phone: activeReviewer.phone || '',
+    reviewer_name: activeReviewer.name || '',
     group_id: auth.user?.groupId ?? 0,
     result_status: 0,
     pass_code_vehicle_color_name: form.value.plateColor || pc?.vehicleColorName || '',
@@ -1804,10 +1806,11 @@ async function onSubmitConfirmYes(payload?: {
     license_image_main: licMain,
     license_image_hang: licHang,
     license_image_path1: '',
-    // 查验/班组用登录用户；复核人暂时留空
+    // 查验/班组用登录用户；复核人用登录所选（确认页可再改）
     operator_name: auth.user?.realName || '',
     inspector_phone: payload?.inspector_phone || auth.user?.phone || '',
-    reviewer_phone: '',
+    reviewer_phone:
+      payload?.reviewer_phone || auth.resolveActiveReviewer().phone || '',
     group_id: payload?.group_id ?? auth.user?.groupId ?? '',
     // 0=正常，1=异常
     result_status: payload?.result_status ?? 0,
