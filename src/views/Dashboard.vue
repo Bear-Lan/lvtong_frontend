@@ -4,7 +4,7 @@ import { useAuthStore } from '@/stores/useAuthStore'
 import { useWsStore } from '@/stores/useWsStore'
 import { request } from '@/api/request'
 import { getCurrentUserApi } from '@/api/auth'
-import { controlGateApi, getGateStatusApi } from '@/api/device'
+import { controlGateApi, fetchBodyRadarImageApi, getGateStatusApi } from '@/api/device'
 
 import AppHeader from '@/components/AppHeader.vue'
 import type { ToolAnchor } from '@/components/AppHeader.vue'
@@ -271,6 +271,31 @@ function onBodyViewSwap() {
   const idx = BODY_VIEW_ORDER.indexOf(bodyView.value)
   bodyView.value = BODY_VIEW_ORDER[(idx + 1) % BODY_VIEW_ORDER.length]
 }
+
+const bodyRadarFetching = ref<{ top: boolean; side: boolean }>({ top: false, side: false })
+
+async function ensureBodyRadarImage(view: 'top' | 'side') {
+  if (bodyImageUrls.value[view]) return
+  if (bodyRadarFetching.value[view]) return
+  bodyRadarFetching.value = { ...bodyRadarFetching.value, [view]: true }
+  try {
+    const res = await fetchBodyRadarImageApi(view)
+    const url = res?.data?.imageUrl
+    if (url) {
+      bodyImageUrls.value = { ...bodyImageUrls.value, [view]: url }
+    }
+  } catch (e) {
+    console.warn(`[BODY] ${view} 雷达图按需拉取失败`, e)
+  } finally {
+    bodyRadarFetching.value = { ...bodyRadarFetching.value, [view]: false }
+  }
+}
+
+watch(bodyView, (view) => {
+  if (view === 'top' || view === 'side') {
+    void ensureBodyRadarImage(view)
+  }
+})
 
 /** 透视影像路径 — 对齐 m_currentTanPath；删除确认后清空 */
 type XrayView = '200' | '160' | 'mosaic'

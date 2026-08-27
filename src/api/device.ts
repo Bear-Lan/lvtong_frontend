@@ -103,3 +103,15 @@ export function controlGateApi(action: 'open' | 'close' | 'toggle') {
     body: JSON.stringify({ action }),
   })
 }
+
+/** POST /api/device/body-radar-image — 切换显示车顶/车侧雷达图时按需拉图 */
+export function fetchBodyRadarImageApi(view: 'top' | 'side') {
+  return request<{ imageUrl: string; view: string; slot?: string }>(
+    '/device/body-radar-image',
+    {
+      method: 'POST',
+      body: JSON.stringify({ view }),
+      timeout: 45000,
+    },
+  )
+}
