@@ -15,6 +15,8 @@ const props = defineProps<{
   sourceTempUrl?: string
   view: BodyPcView
   placeholder?: string
+  /** 无图占位文字色调：default 灰 / occupied 红 / waiting 绿 */
+  placeholderTone?: 'default' | 'occupied' | 'waiting'
 }>()
 
 export type CropBoxPayload = {
@@ -85,6 +87,12 @@ const measure = reactive({
 
 const spanLabel = computed(() => (props.view === 'top' ? '车宽' : '车高'))
 const flipLabel = computed(() => linePosition.value > 0.72)
+const placeholderToneClass = computed(() => {
+  const tone = props.placeholderTone ?? 'default'
+  if (tone === 'occupied') return 'tone-occupied'
+  if (tone === 'waiting') return 'tone-waiting'
+  return 'tone-default'
+})
 
 const draftStyle = computed(() => {
   if (!drawingBox.value || !draftStart.value || !draftEnd.value || imgW.value <= 0) {
@@ -479,7 +487,9 @@ defineExpose({
 <template>
   <div class="body-pc" :class="{ interactive: !!imageUrl }">
     <template v-if="!imageUrl">
-      <span class="body-pc-placeholder">{{ placeholder ?? '车身影像' }}</span>
+      <span class="body-pc-placeholder" :class="placeholderToneClass">
+        {{ placeholder ?? '车身影像' }}
+      </span>
     </template>
     <div
       v-else
@@ -570,6 +580,14 @@ defineExpose({
   color: #bbb;
   line-height: 1;
   user-select: none;
+}
+
+.body-pc-placeholder.tone-occupied {
+  color: #e53935;
+}
+
+.body-pc-placeholder.tone-waiting {
+  color: #1afa29;
 }
 
 .stage {

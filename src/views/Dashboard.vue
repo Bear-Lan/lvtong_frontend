@@ -268,6 +268,32 @@ const bodyImageUrls = ref<Record<BodyView, string>>({
 const bodyImageUrl = computed(() => bodyImageUrls.value[bodyView.value])
 const bodyViewLabel = computed(() => BODY_VIEW_LABELS[bodyView.value])
 
+/** 车身图无图时的占位：车道占用(红) → 等待驶入(绿) → 默认 */
+const GATE_RELEASE_MIN_DISTANCE_M = 25
+const laneOccupied = ref(false)
+const gateReleased = ref(false)
+const radarObjectCount = ref(0)
+
+const isPreGateLaneBlocked = computed(() => {
+  if (!bookingStore.isDetection || gateReleased.value) return false
+  if (laneOccupied.value) return true
+  if (radarObjectCount.value !== 1) return radarObjectCount.value > 0
+  const d = workflow.value.distance
+  return d > 0 && d < GATE_RELEASE_MIN_DISTANCE_M
+})
+
+const bodyPlaceholderTone = computed((): 'default' | 'occupied' | 'waiting' => {
+  if (bodyImageUrls.value.body || bodyView.value !== 'body') return 'default'
+  if (isPreGateLaneBlocked.value) return 'occupied'
+  if (gateReleased.value) return 'waiting'
+  return 'default'
+})
+const bodyPlaceholderText = computed(() => {
+  if (bodyPlaceholderTone.value === 'occupied') return '车道占用'
+  if (bodyPlaceholderTone.value === 'waiting') return '等待驶入'
+  return '车身影像'
+})
+
 function onBodyViewSwap() {
   const idx = BODY_VIEW_ORDER.indexOf(bodyView.value)
   bodyView.value = BODY_VIEW_ORDER[(idx + 1) % BODY_VIEW_ORDER.length]
@@ -1585,6 +1611,9 @@ function doReset() {
   weightRangeHint.value = ''
   aiLicenseCropLastKey = ''
   bodyImageUrls.value = { body: '', top: '', side: '' }
+  laneOccupied.value = false
+  gateReleased.value = false
+  radarObjectCount.value = 0
   xrayImageUrls.value = { '200': '', '160': '', mosaic: '' }
   liveCropPreviewUrl.value = ''
   resetXrayProcessState()
@@ -1921,9 +1950,16 @@ function setupWS() {
   let pendingRadarDistance: number | null = null
   let radarRaf = 0
   wsStore.subscribe('radar_distance', (msg) => {
-    const data = msg.data as { distance?: number; mode?: number } | undefined
+    const data = msg.data as {
+      distance?: number
+      mode?: number
+      objectCount?: number
+    } | undefined
     if (data?.distance == null || !Number.isFinite(Number(data.distance))) return
     const d = Number(data.distance)
+    if (data.objectCount != null && Number.isFinite(Number(data.objectCount))) {
+      radarObjectCount.value = Number(data.objectCount)
+    }
     // 合并到下一帧再写 ref，避免 10Hz+ 同步重绘压主线程
     pendingRadarDistance = d
     if (!radarRaf) {
@@ -1984,12 +2020,29 @@ function setupWS() {
   })
 
   wsStore.subscribe('detection_step', (msg) => {
-    const data = msg.data as { step?: number; message?: string } | undefined
+    const data = msg.data as {
+      step?: number
+      message?: string
+      gateReleased?: boolean
+    } | undefined
+    if (data?.gateReleased) {
+      gateReleased.value = true
+      laneOccupied.value = false
+    }
     if (data?.step != null) {
       workflow.value.checkStep = data.step
       workflow.value.stepMessage = data.message ?? ''
-      // 对齐 Qt m_checkstep 联动 store
-      bookingStore.checkStep = data.step
+      // 仅抬杆放行更新预约流程 checkStep；距离阈值也会推 step=2 等，勿混淆
+      if (data.gateReleased || data.message === '放行中') {
+        bookingStore.checkStep = data.step
+      }
+    }
+  })
+
+  wsStore.subscribe('lane_occupied', (msg) => {
+    const data = msg.data as { occupied?: boolean } | undefined
+    if (data?.occupied != null) {
+      laneOccupied.value = Boolean(data.occupied)
     }
   })
 
@@ -1999,6 +2052,9 @@ function setupWS() {
 
   wsStore.subscribe('booking_accepted', (msg) => {
     const data = msg.data as BookingAcceptPayload | undefined
+    laneOccupied.value = false
+    gateReleased.value = false
+    radarObjectCount.value = 0
     if (data?.vehicleHeight != null) {
       bookingStore.applyAccept({
         vehicleHeight: data.vehicleHeight,
@@ -2034,6 +2090,9 @@ function setupWS() {
   wsStore.subscribe('booking_rejected', () => {
     bookingStore.applyReject()
     workflow.value.bookingActive = false
+    laneOccupied.value = false
+    gateReleased.value = false
+    radarObjectCount.value = 0
   })
 
   /** 对齐 LvTongPro::onReset：服务端推送 booking_reset 时兜底重置 */
@@ -2042,6 +2101,9 @@ function setupWS() {
     workflow.value.bookingActive = false
     workflow.value.checkStep = 0
     workflow.value.stepMessage = ''
+    laneOccupied.value = false
+    gateReleased.value = false
+    radarObjectCount.value = 0
   })
 
   /** 图像就绪：兼容
@@ -2410,7 +2472,8 @@ const anyDialogOpen = computed(
           </div>
           <BodyPointCloudPanel
             ref="bodyPcPanelRef"
-            placeholder="车身影像"
+            :placeholder="bodyPlaceholderText"
+            :placeholder-tone="bodyPlaceholderTone"
             :image-url="bodyImageUrl || undefined"
             :source-temp-url="bodyImageUrl || undefined"
             :view="bodyView"
