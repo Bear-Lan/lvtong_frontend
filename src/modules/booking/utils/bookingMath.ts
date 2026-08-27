@@ -1,9 +1,12 @@
-/** 像素到米 — 对齐 OrderDialog.h PIXEL_TO_METER */
+/** 像素到米 — 默认；有 Image-Resolution 时用 metersPerPixel */
 export const PIXEL_TO_METER = 0.01
 
 const BIG_HEIGHT_THRESHOLD = 2.8
 const SMALL_HEIGHT = 1.8
 const BIG_HEIGHT = 3.0
+
+/** 默认红线相对车头的偏移（米） */
+export const DEFAULT_LINE_OFFSET_M = 1.5
 
 export function vehicleTypeFromRadarHeight(height: number): 'small' | 'big' {
   return height > BIG_HEIGHT_THRESHOLD ? 'big' : 'small'
@@ -62,9 +65,30 @@ export function parseImageEnvelope(envelopeStr: string, imageWidth: number): num
   return null
 }
 
-export function distanceFromLinePosition(position: number, originalImageWidth: number): number {
+export function distanceFromLinePosition(
+  position: number,
+  originalImageWidth: number,
+  metersPerPixel: number = PIXEL_TO_METER,
+): number {
   if (originalImageWidth <= 0) return 0
-  return position * originalImageWidth * PIXEL_TO_METER
+  const mpp = metersPerPixel > 0 ? metersPerPixel : PIXEL_TO_METER
+  return position * originalImageWidth * mpp
+}
+
+/**
+ * 按 Vehicle-SX（米）+ 偏移放红线。
+ * 像素 = (sxM + offsetM) / metersPerPixel；返回相对位置 0~1。
+ */
+export function linePositionFromVehicleSx(
+  vehicleSxM: number,
+  imageWidth: number,
+  metersPerPixel: number = PIXEL_TO_METER,
+  offsetMeters: number = DEFAULT_LINE_OFFSET_M,
+): number | null {
+  if (imageWidth <= 0) return null
+  const mpp = metersPerPixel > 0 ? metersPerPixel : PIXEL_TO_METER
+  const px = (Math.max(0, vehicleSxM) + offsetMeters) / mpp
+  return Math.min(1, Math.max(0, px / imageWidth))
 }
 
 /**
@@ -74,26 +98,18 @@ export function distanceFromLinePosition(position: number, originalImageWidth: n
 export function defaultLinePositionAfterOrigin(
   originPx: number,
   imageWidth: number,
-  defaultMeters: number = 1.5,
+  defaultMeters: number = DEFAULT_LINE_OFFSET_M,
+  metersPerPixel: number = PIXEL_TO_METER,
 ): number | null {
   if (imageWidth <= 0) return null
-  const px = Math.max(0, originPx) + defaultMeters / PIXEL_TO_METER
+  const mpp = metersPerPixel > 0 ? metersPerPixel : PIXEL_TO_METER
+  const px = Math.max(0, originPx) + defaultMeters / mpp
   return Math.min(1, Math.max(0, px / imageWidth))
 }
 
 /**
- * 车头长度 — 对齐 Qt 意图 + 1px=0.01m
- *
- * Qt 原文：
- *   realDistance = linePx * 0.01
- *   rDistance = realDistance - (vw - iw)
- * 其中 iw/vw 与包络同为像素坐标，直接减「米」单位不一致。
- *
- * 正确物理量（与 PIXEL_TO_METER 一致）：
- *   车头长 = (红线像素 - 车头起点像素) * 0.01
- *   车头起点 = VehicleHeader.x - ImageEnvelope.x
- *
- * 无包络时后端会用点云内容最左列填入 vw，避免从画布左边缘虚高。
+ * 车头长度（米）= 红线位置 − 车头起点。
+ * 优先用 Vehicle-SX + Image-Resolution；否则回退包络像素 × mpp。
  */
 export function calcCarHeadLength(
   linePosition: number,
@@ -101,14 +117,27 @@ export function calcCarHeadLength(
   imageEnvelope: string,
   vehicleHeaderEnvelope: string,
   defaultWidth: number,
+  opts?: { vehicleSx?: number; metersPerPixel?: number },
 ): number {
   if (originalImageWidth <= 0) return defaultWidth
+
+  const mpp =
+    opts?.metersPerPixel && opts.metersPerPixel > 0
+      ? opts.metersPerPixel
+      : PIXEL_TO_METER
+  const lineM = linePosition * originalImageWidth * mpp
+
+  if (opts?.vehicleSx != null && Number.isFinite(opts.vehicleSx)) {
+    const r = lineM - Math.max(0, opts.vehicleSx)
+    if (!Number.isFinite(r)) return defaultWidth
+    return r > 0 ? r : defaultWidth
+  }
 
   const linePx = linePosition * originalImageWidth
   const iw = envelopeFirstNumber(imageEnvelope)
   const vw = envelopeFirstNumber(vehicleHeaderEnvelope)
   const originPx = vw - iw
-  const rDistance = (linePx - originPx) * PIXEL_TO_METER
+  const rDistance = (linePx - originPx) * mpp
 
   if (!Number.isFinite(rDistance)) return defaultWidth
   return rDistance > defaultWidth ? rDistance : defaultWidth

@@ -11,15 +11,22 @@ export interface RadarImageResponse {
   imageUrl: string
   /** Image-Envelope */
   imageEnvelope: string
-  /** Image-Resolution */
+  /** Image-Resolution 原始字符串 */
   imageResolution: string
+  /**
+   * 米/像素（Image-Resolution 数值）。
+   * 现场约定：0.01 → 1 像素 = 0.01 米
+   */
+  metersPerPixel?: number
   /** VehicleHeader-Envelope */
   vehicleHeaderEnvelope: string
   /** Vehicle-Height（米） */
   vehicleHeight: number
+  /** Vehicle-SX：车头距图片起始位置（米）；null/缺省表示未返回 */
+  vehicleSx?: number | null
   originalImageWidth: number
   originalImageHeight: number
-  /** 无包络时后端推算的内容最左列（像素） */
+  /** 车头像素起点（由 SX/resolution 推算，或内容最左列） */
   contentOriginX?: number
 }
 

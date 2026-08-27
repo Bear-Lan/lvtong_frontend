@@ -9,7 +9,8 @@ import {
   calcCarHeadLength,
   defaultLinePositionAfterOrigin,
   envelopeFirstNumber,
-  parseImageEnvelope,
+  linePositionFromVehicleSx,
+  PIXEL_TO_METER,
   vehicleTypeFromRadarHeight,
 } from '../utils/bookingMath'
 
@@ -33,6 +34,10 @@ export function useBookingDialog() {
   const imageEnvelope = ref('')
   const vehicleHeaderEnvelope = ref('')
   const originalImageWidth = ref(0)
+  /** Vehicle-SX（米）；null=接口未返回；有则用 SX+1.5m 放红线 */
+  const vehicleSx = ref<number | null>(null)
+  /** Image-Resolution：米/像素（0.01 → 1px=0.01m） */
+  const metersPerPixel = ref(PIXEL_TO_METER)
   const vehicleHeight = ref(3.0)
   const carHeadLength = ref(DEFAULT_HEAD_WIDTH)
   const xrayEnabled = ref(true)
@@ -85,6 +90,10 @@ export function useBookingDialog() {
       imageEnvelope.value,
       vehicleHeaderEnvelope.value,
       DEFAULT_HEAD_WIDTH,
+      {
+        vehicleSx: vehicleSx.value != null ? vehicleSx.value : undefined,
+        metersPerPixel: metersPerPixel.value,
+      },
     )
     carHeadLength.value = next
   }
@@ -109,6 +118,16 @@ export function useBookingDialog() {
             imageEnvelope.value = data.imageEnvelope || ''
             vehicleHeaderEnvelope.value = data.vehicleHeaderEnvelope || ''
             originalImageWidth.value = data.originalImageWidth || 0
+            vehicleSx.value =
+              typeof data.vehicleSx === 'number' && Number.isFinite(data.vehicleSx)
+                ? data.vehicleSx
+                : null
+            const mpp =
+              typeof data.metersPerPixel === 'number' && data.metersPerPixel > 0
+                ? data.metersPerPixel
+                : Number.parseFloat(data.imageResolution || '') || PIXEL_TO_METER
+            metersPerPixel.value = mpp > 0 ? mpp : PIXEL_TO_METER
+
             if (data.vehicleHeight > 0) {
               vehicleHeight.value = data.vehicleHeight
               // 车高>2.8 自动切大型；未手动改过时随高度同步
@@ -119,15 +138,24 @@ export function useBookingDialog() {
               '[Booking] radar meta',
               `attempt=${attempt}/${maxRetries}`,
               `w=${originalImageWidth.value}`,
-              `env=${imageEnvelope.value || '-'}`,
-              `hdr=${vehicleHeaderEnvelope.value || '-'}`,
+              `h=${data.vehicleHeight}`,
+              `sx=${vehicleSx.value != null ? `${vehicleSx.value}m` : '-'}`,
+              `mpp=${metersPerPixel.value}`,
               `originX=${data.contentOriginX ?? '-'}`,
             )
 
             const width = data.originalImageWidth || 0
-            const fromEnvelope = parseImageEnvelope(data.imageEnvelope, width)
-            if (fromEnvelope != null) {
-              linePosition.value = fromEnvelope
+            // 优先：红线放在车头后 1.5m（Vehicle-SX + 1.5）/ Resolution
+            if (vehicleSx.value != null) {
+              const fromSx = linePositionFromVehicleSx(
+                vehicleSx.value,
+                width,
+                metersPerPixel.value,
+                DEFAULT_HEAD_WIDTH,
+              )
+              if (fromSx != null) {
+                linePosition.value = fromSx
+              }
             } else {
               const originPx =
                 typeof data.contentOriginX === 'number' && data.contentOriginX > 0
@@ -137,6 +165,7 @@ export function useBookingDialog() {
                 originPx,
                 width,
                 DEFAULT_HEAD_WIDTH,
+                metersPerPixel.value,
               )
               if (fromOrigin != null) {
                 linePosition.value = fromOrigin
@@ -178,6 +207,8 @@ export function useBookingDialog() {
     linePosition.value = 0.5
     carHeadLength.value = DEFAULT_HEAD_WIDTH
     vehicleHeight.value = 3.0
+    vehicleSx.value = null
+    metersPerPixel.value = PIXEL_TO_METER
     vehicleTypeManual.value = false
     vehicleType.value = vehicleTypeFromRadarHeight(3.0)
     imageEnvelope.value = ''
