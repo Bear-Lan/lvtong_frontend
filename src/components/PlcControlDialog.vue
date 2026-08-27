@@ -9,6 +9,7 @@ import { onMounted, onUnmounted, ref, computed } from 'vue'
 import { useWsStore } from '@/stores/useWsStore'
 import { request } from '@/api/request'
 import QtMessageBox from '@/components/common/QtMessageBox.vue'
+import { parsePlcSignalLights } from '@/utils/plcXrayStatus'
 
 const props = defineProps<{
   /** 对齐 Qt：btn_plccontrol 左下角全局坐标 */
@@ -76,11 +77,11 @@ const states = ref<Record<string, boolean>>({
 })
 
 function applyStatus(d: Record<string, unknown>) {
-  // 对齐中间件 ST_* / parse_dev_bits；目前只回弹控制项（status=FFFF 时信 cmd）
-  states.value.redlight = !!(d.redLightCmd ?? d.redlight ?? d.red)
-  states.value.yellowlight = !!(d.yellowLightCmd ?? d.yellowlight ?? d.yellow)
-  states.value.greenlight = !!(d.greenLightCmd ?? d.greenlight ?? d.green)
-  states.value.filllight = !!(d.createLightCmd ?? d.filllight)
+  const lights = parsePlcSignalLights(d)
+  states.value.redlight = lights.red
+  states.value.yellowlight = lights.yellow
+  states.value.greenlight = lights.green
+  states.value.filllight = lights.fillLight
   states.value.soundalarm = !!(d.soundalarmCmd ?? d.soundalarm)
   states.value.interlock160 = !!(d.interlock160Cmd ?? d.interlock160)
   states.value.interlock200 = !!(d.interlock200Cmd ?? d.interlock200)

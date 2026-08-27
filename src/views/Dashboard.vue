@@ -12,6 +12,14 @@ import BodyPointCloudPanel from '@/components/BodyPointCloudPanel.vue'
 import PreviewButton from '@/components/PreviewButton.vue'
 import BottomWorkflowPanel from '@/components/BottomWorkflowPanel.vue'
 import type { WorkflowStepKey } from '@/components/WorkflowIcons.vue'
+import {
+  deriveXrayMachinePhase,
+  parsePlcSignalLights,
+  parsePlcXrayBits,
+  type PlcSignalLights,
+  type PlcXrayBits,
+  type XrayMachinePhase,
+} from '@/utils/plcXrayStatus'
 import BookingDialog from '@/modules/booking/BookingDialog.vue'
 import TalkDialog from '@/components/TalkDialog.vue'
 import AgriculturalSelect from '@/components/AgriculturalSelect.vue'
@@ -59,8 +67,6 @@ const showDeviceStatus = ref(false)
 const gateOnline = ref(false)
 const gateOpen = ref(false)
 const gateBusy = ref(false)
-const showGateHint = ref(false)
-const gateHintMessage = ref('')
 let gateStatusTimer: ReturnType<typeof setInterval> | null = null
 /** 组播 XRSUP/XRSDOWN（或旧 XRAY200/160）→ 底栏光机读数 */
 const xrayTelemetry = ref({
@@ -71,6 +77,27 @@ const xrayTelemetry = ref({
   ma160: '-',
   temp160: '-',
 })
+/** DEVICE bit9–12 光源/光闸 + 信号灯 — 来自 plc_status */
+const plcXrayBits = ref<PlcXrayBits>({
+  source200: false,
+  source160: false,
+  gate200: false,
+  gate160: false,
+})
+const plcSignalLights = ref<PlcSignalLights>({
+  red: false,
+  yellow: false,
+  green: false,
+  fillLight: false,
+})
+const xrayMachinePhase = computed<XrayMachinePhase>(() =>
+  deriveXrayMachinePhase(plcXrayBits.value),
+)
+
+function applyPlcDeviceStatus(data: Record<string, unknown>) {
+  plcXrayBits.value = parsePlcXrayBits(data)
+  plcSignalLights.value = parsePlcSignalLights(data)
+}
 
 function _fmtXrayNum(v: unknown): string {
   const n = Number(v)
@@ -1509,20 +1536,23 @@ async function refreshGateStatus() {
 async function refreshGateFromPlcCache() {
   try {
     const res = await request<Record<string, unknown> | null>('/device/plc-status')
-    if (res.code === 0 && res.data && typeof res.data.stickdown === 'boolean') {
-      applyGateFromStickdown(res.data.stickdown)
-      gateOnline.value = true
+    if (res.code === 0 && res.data) {
+      applyPlcDeviceStatus(res.data)
+      if (typeof res.data.stickdown === 'boolean') {
+        applyGateFromStickdown(res.data.stickdown)
+        gateOnline.value = true
+      }
     }
   } catch {
     /* 尚无缓存时忽略 */
   }
 }
 
-/** 对齐 Qt GateUIController::onIconClicked：点击切换抬杆/落杆 */
+/** 对齐 Qt GateUIController::onIconClicked：点击直接切换抬杆/落杆，无确认弹窗 */
 async function onGateIconClick() {
   if (gateBusy.value) return
   if (!gateOnline.value) {
-    showGateMessage('栏杆机未连接')
+    console.warn('[gate] 栏杆机未连接')
     void refreshGateStatus()
     return
   }
@@ -1537,11 +1567,10 @@ async function onGateIconClick() {
       } else {
         await refreshGateStatus()
       }
-      // 组播无协议 ACK：用 confirmed / message 告知结果
       if (d && d.confirmed === false && d.sent) {
-        showGateMessage(
-          res.message
-            || '已发组播，但未看到栏杆状态变化（中间件可能未处理）',
+        console.warn(
+          '[gate]',
+          res.message || '已发组播，但未看到栏杆状态变化（中间件可能未处理）',
         )
       } else if (d && d.confirmed) {
         console.info('[gate]', res.message, d.packet, 'stickdown=', d.stickdown)
@@ -1549,20 +1578,15 @@ async function onGateIconClick() {
         console.info('[gate]', res.message)
       }
     } else {
-      showGateMessage(res.message || '栏杆控制失败')
+      console.warn('[gate]', res.message || '栏杆控制失败')
       await refreshGateStatus()
     }
   } catch (e) {
-    showGateMessage(e instanceof Error ? e.message : '栏杆控制失败')
+    console.warn('[gate]', e instanceof Error ? e.message : '栏杆控制失败')
     await refreshGateStatus()
   } finally {
     gateBusy.value = false
   }
-}
-
-function showGateMessage(msg: string) {
-  gateHintMessage.value = msg
-  showGateHint.value = true
 }
 
 // ---- 重置 / 确认 ----
@@ -1946,6 +1970,11 @@ const showResetConfirmBox = ref(false)
 function setupWS() {
   wsStore.connect()
 
+  // 晚进页时回放 WS 已缓存的 DEVICE，避免信号灯/光机图标全灰
+  if (wsStore.lastPlcStatus) {
+    applyPlcDeviceStatus(wsStore.lastPlcStatus)
+  }
+
   let radarLogN = 0
   let pendingRadarDistance: number | null = null
   let radarRaf = 0
@@ -1983,8 +2012,8 @@ function setupWS() {
 
   wsStore.subscribe('plc_status', (msg) => {
     console.log('[WS] PLC状态:', msg.data)
-    // 对齐 LvTongPro::onPLCStopChanged(bool value)
     const data = msg.data as Record<string, unknown> | undefined
+    if (data) applyPlcDeviceStatus(data)
     const urgent =
       data?.urgentstop === true ||
       data?.urgentStop === true ||
@@ -2550,6 +2579,9 @@ const anyDialogOpen = computed(
             :distance="workflow.distance"
             :gate-online="gateOnline"
             :gate-open="gateOpen"
+            :xray-phase="xrayMachinePhase"
+            :xray-bits="plcXrayBits"
+            :signal-lights="plcSignalLights"
             :kv200="xrayTelemetry.kv200"
             :ma200="xrayTelemetry.ma200"
             :temp200="xrayTelemetry.temp200"
@@ -2956,16 +2988,6 @@ const anyDialogOpen = computed(
       @close="stopErrorVisible = false"
     />
 
-    <!-- 闸机点击提示 — 对齐 GateUIController QMessageBox -->
-    <QtMessageBox
-      v-if="showGateHint"
-      title="提示"
-      :message="gateHintMessage"
-      icon="warning"
-      :buttons="['yes']"
-      @yes="showGateHint = false"
-      @close="showGateHint = false"
-    />
 
     <!-- 主页实时视频：VisualSurveillance MJPEG；裁切叠层来自车身/透视框图（非 MJPEG 截帧） -->
   </div>

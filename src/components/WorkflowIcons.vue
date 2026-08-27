@@ -1,6 +1,8 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { SEGMENT_PIX, START_POS_X, SCENE_WIDTH } from '@/constants/workflowLayout'
+import type { XrayMachinePhase } from '@/utils/plcXrayStatus'
+import { XRAY_PHASE_ICONS } from '@/utils/plcXrayStatus'
 
 export type WorkflowStepKey = 'book' | 'gate' | 'xray' | 'camera' | 'audit'
 
@@ -21,12 +23,15 @@ const props = withDefaults(
     gateOnline?: boolean
     /** 栏杆抬起 */
     gateOpen?: boolean
+    /** 光机三态：空闲 / 预热 / 工作 */
+    xrayPhase?: XrayMachinePhase
   }>(),
   {
     bookingActive: false,
     bookingPending: false,
     gateOnline: false,
     gateOpen: false,
+    xrayPhase: 'idle',
   },
 )
 
@@ -48,6 +53,10 @@ const gateTitle = computed(() => {
     : '栏杆机状态：关闭\n点击切换开关状态'
 })
 
+const xrayIcon = computed(
+  () => XRAY_PHASE_ICONS[props.xrayPhase] ?? XRAY_PHASE_ICONS.idle,
+)
+
 const items = computed<WorkflowItem[]>(() => [
   { key: 'book', label: '预约', icon: '/assets/img/a_lc_online.png', wide: true },
   {
@@ -57,7 +66,7 @@ const items = computed<WorkflowItem[]>(() => [
     wide: true,
     title: gateTitle.value,
   },
-  { key: 'xray', label: '光机', icon: '/assets/img/xray_online.png' },
+  { key: 'xray', label: '光机', icon: xrayIcon.value },
   { key: 'camera', label: '拍照', icon: '/assets/img/a_xj_offline.png' },
   { key: 'audit', label: '审核', icon: '/assets/img/a_sh.png' },
 ])
