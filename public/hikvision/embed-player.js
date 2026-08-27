@@ -20,6 +20,27 @@
   var g_playChannelId = 1
   /** 对讲通道（I_GetAudioInfo） */
   var g_audioChannel = null
+  /** 切换队列：快速连点时只保留最后一次 */
+  var g_switchPending = null
+
+  /** 吞掉 SDK 内部未 catch 的 reject（IPC 无数字通道等） */
+  window.addEventListener('unhandledrejection', function (ev) {
+    var r = ev && ev.reason
+    if (!r || typeof r !== 'object') return
+    var code = r.errorCode
+    var msg = r.errorMsg
+    if (code == null) return
+    if (
+      code === 403 ||
+      code === 404 ||
+      code === 2001 ||
+      code === 3001 ||
+      msg === 'document' ||
+      msg == null
+    ) {
+      ev.preventDefault()
+    }
+  })
 
   function post(msg) {
     try {
@@ -243,7 +264,7 @@
       }
       setTimeout(function () {
         done(fallback)
-      }, 2000)
+      }, 600)
 
       try {
         WebVideoCtrl.I_GetAnalogChannelInfo(identify, {
@@ -257,19 +278,7 @@
           error: function () {},
         })
       } catch (e) {}
-
-      try {
-        WebVideoCtrl.I_GetDigitalChannelInfo(identify, {
-          success: function (xmlDoc) {
-            var id = parseInt(
-              $(xmlDoc).find('InputProxyChannelStatus').eq(0).find('id').eq(0).text(),
-              10,
-            )
-            if (id > 0) done(id)
-          },
-          error: function () {},
-        })
-      } catch (e) {}
+      // 独立 IPC 无数字通道，不调 I_GetDigitalChannelInfo（否则控制台 403）
     })
   }
 
@@ -288,7 +297,7 @@
         sess.analogReady = true
         resolve()
       }
-      setTimeout(done, 2000)
+      setTimeout(done, 500)
       try {
         WebVideoCtrl.I_GetAnalogChannelInfo(identify, {
           success: done,
@@ -324,14 +333,20 @@
     })
   }
 
-  async function switchToDevice(cfg) {
+  async function switchToDevice(cfg, opts) {
+    opts = opts || {}
     var identify = await loginSafe(cfg)
     var sess = g_sessions[identify] || (g_sessions[identify] = { cfg: cfg })
     sess.cfg = cfg
     g_deviceIdentify = identify
     g_analogInfoReady = !!sess.analogReady
 
-    await ensureAnalogChannelInfoFor(identify)
+    if (sess.analogReady) {
+      /* 已预热则跳过 */
+    } else {
+      await ensureAnalogChannelInfoFor(identify)
+    }
+
     var channelId = cfg.channelId || sess.channelId
     if (!channelId) {
       channelId = await getFirstChannelIdFor(identify)
@@ -339,21 +354,30 @@
     }
     g_playChannelId = channelId > 0 ? channelId : 1
 
+    var streamType = cfg.streamType || 1
+
     if (g_playing) {
       await stopPlayOnly()
     }
 
-    await startPlay(g_playChannelId, cfg.streamType || 1)
-    if (g_layout) applyLayout(g_layout, true)
+    await startPlay(g_playChannelId, streamType)
+    if (g_layout) applyLayout(g_layout, false)
+    return finishSwitchResult(identify, sess, opts)
+  }
 
+  function finishSwitchResult(identify, sess, opts) {
     var audioCh = sess.audioChannel
-    if (audioCh == null) {
-      try {
-        audioCh = await getAudioInfo()
-        sess.audioChannel = audioCh
-      } catch (eAudio) {}
+    if (!opts.skipAudio && audioCh == null) {
+      return getAudioInfo()
+        .then(function (ch) {
+          sess.audioChannel = ch
+          return { identify: identify, audioChannel: ch }
+        })
+        .catch(function () {
+          return { identify: identify, audioChannel: null }
+        })
     }
-    return { identify: identify, audioChannel: audioCh }
+    return Promise.resolve({ identify: identify, audioChannel: audioCh })
   }
 
   function getFirstChannelId() {
@@ -367,25 +391,12 @@
       }
       setTimeout(function () {
         done(fallback)
-      }, 2000)
+      }, 600)
 
       try {
         WebVideoCtrl.I_GetAnalogChannelInfo(g_deviceIdentify, {
           success: function (xmlDoc) {
             var id = parseInt($(xmlDoc).find('VideoInputChannel').eq(0).find('id').eq(0).text(), 10)
-            if (id > 0) done(id)
-          },
-          error: function () {},
-        })
-      } catch (e) {}
-
-      try {
-        WebVideoCtrl.I_GetDigitalChannelInfo(g_deviceIdentify, {
-          success: function (xmlDoc) {
-            var id = parseInt(
-              $(xmlDoc).find('InputProxyChannelStatus').eq(0).find('id').eq(0).text(),
-              10,
-            )
             if (id > 0) done(id)
           },
           error: function () {},
@@ -409,7 +420,7 @@
         g_analogInfoReady = true
         resolve()
       }
-      setTimeout(done, 2000)
+      setTimeout(done, 500)
       try {
         WebVideoCtrl.I_GetAnalogChannelInfo(g_deviceIdentify, {
           success: function () {
@@ -432,7 +443,7 @@
       }, 15000)
 
       function doPlay() {
-        WebVideoCtrl.I_StartRealPlay(g_deviceIdentify, {
+        var ret = WebVideoCtrl.I_StartRealPlay(g_deviceIdentify, {
           iStreamType: streamType || 1,
           iChannelID: channelId || 1,
           bZeroChannel: false,
@@ -446,6 +457,19 @@
             reject(new Error((oError && oError.errorMsg) || '开启预览失败'))
           },
         })
+        if (ret && typeof ret.then === 'function') {
+          ret.then(
+            function () {
+              clearTimeout(timer)
+              g_playing = true
+              resolve()
+            },
+            function (oError) {
+              clearTimeout(timer)
+              reject(new Error((oError && oError.errorMsg) || '开启预览失败'))
+            },
+          )
+        }
       }
 
       var oWndInfo = null
@@ -548,6 +572,17 @@
           resolve(g_audioChannel)
         },
         error: function (oError) {
+          var code = oError && oError.errorCode
+          // 部分 IPC 无 TwoWayAudio ISAPI，仍可用通道 1 对讲
+          if (code === 404 || code === 403) {
+            g_audioChannel = 1
+            post({
+              type: 'hik-log',
+              text: '音频参数 ISAPI ' + code + '，fallback channel=1',
+            })
+            resolve(1)
+            return
+          }
           reject(new Error(formatTalkErr(oError, '获取对讲通道失败')))
         },
       })
@@ -875,24 +910,31 @@
     }
   }
 
-  /** 切换设备：不登出，仅停流后换设备预览 */
+  /** 切换设备：不登出；采集场景 skipAudio 跳过对讲 ISAPI */
   async function handleSwitch(cfg) {
+    g_switchPending = cfg
     if (g_busy) return
-    g_busy = true
-    try {
-      status('正在切换摄像头…', 'loading')
-      var result = await switchToDevice(cfg)
-      status('预览中', 'playing')
-      post({
-        type: 'hik-playing',
-        audioChannel: result.audioChannel,
-        deviceKey: result.identify,
-      })
-    } catch (e) {
-      status((e && e.message) || '切换失败', 'error')
-      post({ type: 'hik-error', message: (e && e.message) || '切换失败' })
-    } finally {
-      g_busy = false
+    while (g_switchPending) {
+      var nextCfg = g_switchPending
+      g_switchPending = null
+      g_busy = true
+      try {
+        var skipAudio = !!(nextCfg && nextCfg.skipAudio)
+        var result = await switchToDevice(nextCfg, {
+          skipAudio: skipAudio,
+        })
+        status('预览中', 'playing')
+        post({
+          type: 'hik-playing',
+          audioChannel: result.audioChannel,
+          deviceKey: result.identify,
+        })
+      } catch (e) {
+        status((e && e.message) || '切换失败', 'error')
+        post({ type: 'hik-error', message: (e && e.message) || '切换失败' })
+      } finally {
+        g_busy = false
+      }
     }
   }
 

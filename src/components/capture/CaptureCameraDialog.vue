@@ -88,7 +88,9 @@ const {
 } = hik
 
 const liveHint = computed(() => hikStatusText.value || '实时摄像头画面区域')
-const showLiveHint = computed(() => hikStatus.value !== 'playing')
+const showLiveHint = computed(
+  () => hikStatus.value !== 'playing' && !switchingCamera.value,
+)
 
 /** 球机预置位 1-9：本机记住「已设置」状态；真正坐标在摄像机内 */
 const PRESET_IDS = [1, 2, 3, 4, 5, 6, 7, 8, 9] as const
@@ -239,7 +241,7 @@ async function selectCamera(name: string) {
   loadPresetConfigured(nextId)
   try {
     await ensureDevice(nextId)
-    window.setTimeout(() => postLayout(true), 120)
+    postLayout(false)
   } finally {
     switchingCamera.value = false
   }
