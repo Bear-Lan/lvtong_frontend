@@ -1595,13 +1595,16 @@ function onReset() {
   showResetConfirmBox.value = true
 }
 
-function onResetConfirmYes() {
+async function onResetConfirmYes() {
   showResetConfirmBox.value = false
+  // 先停后端调度/透视轮询，再清前端，避免迟到的 image_ready 把透视图填回
+  try {
+    const r = await request('/booking/reset', { method: 'POST' })
+    console.info('[booking] reset 响应:', r.code, r.message)
+  } catch (e) {
+    console.warn('[booking] reset 失败:', e)
+  }
   doReset()
-  // 通知后端重置（清 _booking_state + 停调度器 + 设备复位）
-  void request('/booking/reset', { method: 'POST' })
-    .then((r) => console.info('[booking] reset 响应:', r.code, r.message))
-    .catch((e) => console.warn('[booking] reset 失败:', e))
 }
 
 function onResetConfirmNo() {
@@ -1935,11 +1938,12 @@ async function onSubmitConfirmYes(payload?: {
     })
     if (res.code === 0) {
       alert('提交成功')
-      // 提交成功直接重置（不再二次弹重置确认，因为已经走完流程）
+      try {
+        await request('/booking/reset', { method: 'POST' })
+      } catch (e) {
+        console.warn('[booking] reset 失败:', e)
+      }
       doReset()
-      // 通知后端重置
-      void request('/booking/reset', { method: 'POST' })
-        .catch((e) => console.warn('[booking] reset 失败:', e))
     } else {
       alert(res.message || '提交失败')
     }
@@ -2126,14 +2130,13 @@ function setupWS() {
 
   /** 对齐 LvTongPro::onReset：服务端推送 booking_reset 时兜底重置 */
   wsStore.subscribe('booking_reset', () => {
-    bookingStore.reset()
-    workflow.value.bookingActive = false
-    workflow.value.checkStep = 0
-    workflow.value.stepMessage = ''
-    laneOccupied.value = false
-    gateReleased.value = false
-    radarObjectCount.value = 0
+    doReset()
   })
+
+  /** 检测中才接受中间件 progressive 推送，重置后迟到的帧忽略 */
+  function shouldAcceptPanelImages() {
+    return bookingStore.isDetection
+  }
 
   /** 图像就绪：兼容
    *  1) mock_back：{ imageType: body|transparent, urls: {1,2,3} }
@@ -2183,6 +2186,10 @@ function setupWS() {
 
     // 中间设备 agent / 占位批量出图 → 仅填车身影像、透视影像
     if (!data.urls) return
+    if (!shouldAcceptPanelImages()) {
+      console.info(`[WS] image_ready ${data.imageType} ignored (idle)`)
+      return
+    }
     if (data.imageType === 'body') {
       const u1 = pickUrl(data.urls, '1')
       const u2 = pickUrl(data.urls, '2')
