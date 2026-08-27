@@ -2371,10 +2371,9 @@ async function onStopConfirmYes() {
   showStopConfirmBox.value = false
   try {
     await request('/booking/urgent-stop', { method: 'POST' })
-    // 对齐 Qt：setPLC urgentstop=true 成功后 m_openStopFlag = false
     openStopFlag.value = false
   } catch {
-    stopErrorMessage.value = '急停指令发送失败'
+    stopErrorMessage.value = '停止光机失败'
     stopErrorVisible.value = true
   }
 }
