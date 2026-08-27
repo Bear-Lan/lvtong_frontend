@@ -43,7 +43,8 @@ function rectChanged(a: HikLayoutRect | null, b: HikLayoutRect): boolean {
  * 全屏透明 iframe 承载插件；把黑色预览区屏幕坐标发给 iframe，在内部定位 #divPlugin。
  * 注意：避免高频 layout/I_Resize，否则预览会黑闪。
  */
-export function useHikvisionPlayer(anchorRef: Ref<HTMLElement | null>) {
+export function useHikvisionPlayer(anchorRef?: Ref<HTMLElement | null>) {
+  const _anchorRef = anchorRef ?? ref<HTMLElement | null>(null)
   const status = ref<HikPlayerStatus>('idle')
   const statusText = ref('实时摄像头画面区域')
   const iframeRef = shallowRef<HTMLIFrameElement | null>(null)
@@ -71,6 +72,11 @@ export function useHikvisionPlayer(anchorRef: Ref<HTMLElement | null>) {
   /** 后端双工通道锁 token（对讲占用） */
   let voiceLockToken: string | null = null
   let voiceLockAcquiring = false
+  /** 待预热 device_id 列表；iframe ready 后一次性登录全部相机 */
+  let warmupPending: string[] | null = null
+  let warmupDone = false
+  /** cfg ip_port -> device_id，用于 hik-playing 回写 currentDeviceId */
+  const deviceKeyToId = new Map<string, string>()
 
   const OFFSCREEN_LAYOUT: HikLayoutRect = {
     left: -10000,
@@ -88,7 +94,7 @@ export function useHikvisionPlayer(anchorRef: Ref<HTMLElement | null>) {
   function measureAnchor(): HikLayoutRect | null {
     if (talkOnlyMode) return { ...OFFSCREEN_LAYOUT }
 
-    const el = anchorRef.value
+    const el = _anchorRef.value
     if (!el) return null
     const r = el.getBoundingClientRect()
     if (r.width < 40 || r.height < 40) return null
@@ -118,6 +124,111 @@ export function useHikvisionPlayer(anchorRef: Ref<HTMLElement | null>) {
   function hidePluginOverlay() {
     lastSentLayout = { left: -10000, top: -10000, width: 1, height: 1 }
     postToIframe({ type: 'hik-layout', rect: lastSentLayout, force: true })
+  }
+
+  /** 长连接：弹窗关闭时仅隐藏 HWND，不断流、不销毁插件 */
+  function hide(): void {
+    hidePluginOverlay()
+  }
+
+  function setAnchor(el: HTMLElement | null) {
+    _anchorRef.value = el
+    if (el && status.value === 'playing') {
+      postLayout(true)
+    }
+  }
+
+  async function fetchPreviewConfig(deviceId: string): Promise<DevicePreviewConfig> {
+    const res = await getDevicePreviewConfigApi(deviceId)
+    if (res.code !== 0 || !res.data?.ip) {
+      throw new Error(res.message || '获取摄像头配置失败')
+    }
+    return res.data
+  }
+
+  async function postConnect(deviceId: string, cfg: DevicePreviewConfig, switching: boolean) {
+    if (deviceId !== pendingDeviceId) return
+    deviceKeyToId.set(`${cfg.ip}_${cfg.port || 80}`, deviceId)
+    currentDeviceId.value = deviceId
+    statusText.value = switching ? '正在切换摄像头…' : '正在连接摄像头…'
+    postLayout(true)
+    postToIframe({
+      type: switching ? 'hik-switch' : 'hik-start',
+      payload: {
+        ip: cfg.ip,
+        port: cfg.port,
+        username: cfg.username,
+        password: cfg.password,
+        channelId: cfg.channelId,
+        streamType: cfg.streamType,
+      },
+    })
+  }
+
+  async function sendWarmup(deviceIds: string[]) {
+    status.value = 'loading'
+    statusText.value = '正在预热全部摄像头…'
+    const configs: DevicePreviewConfig[] = []
+    for (const id of deviceIds) {
+      const cfg = await fetchPreviewConfig(id)
+      configs.push(cfg)
+      deviceKeyToId.set(`${cfg.ip}_${cfg.port || 80}`, id)
+    }
+    const defaultIndex = deviceIds.indexOf(DEFAULT_GUN_DEVICE_ID)
+    postLayout(true)
+    postToIframe({
+      type: 'hik-warmup',
+      payload: {
+        devices: configs,
+        defaultIndex: defaultIndex >= 0 ? defaultIndex : 0,
+      },
+    })
+  }
+
+  /** Dashboard 挂载：登录 cam_lane / cam_ptz / cam_booking，默认枪机出流 */
+  async function warmupAll(deviceIds: string[]): Promise<void> {
+    warmupPending = [...deviceIds]
+    warmupDone = false
+    initIframe()
+    if (iframeRef.value?.contentWindow) {
+      await sendWarmup(warmupPending)
+      warmupPending = null
+    }
+  }
+
+  /** 已保活时切设备或首次连接；同设备且已在播则只更新布局 */
+  async function ensureDevice(deviceId = DEFAULT_GUN_DEVICE_ID): Promise<void> {
+    pendingDeviceId = deviceId
+    if (currentDeviceId.value === deviceId && status.value === 'playing') {
+      postLayout(true)
+      return
+    }
+
+    status.value = 'loading'
+    statusText.value = '正在加载摄像头配置…'
+    let cfg: DevicePreviewConfig
+    try {
+      cfg = await fetchPreviewConfig(deviceId)
+    } catch (e) {
+      status.value = 'error'
+      statusText.value = e instanceof Error ? e.message : '获取摄像头配置失败'
+      return
+    }
+    if (deviceId !== pendingDeviceId) return
+
+    const switching = warmupDone && !!iframeSrc.value
+    if (!iframeSrc.value) {
+      initIframe()
+      startAfterReady = true
+      startSent = false
+      return
+    }
+    if (!iframeRef.value?.contentWindow) {
+      startAfterReady = true
+      startSent = false
+      return
+    }
+    await postConnect(deviceId, cfg, switching)
   }
 
   async function acquireTalkLock(): Promise<boolean> {
@@ -194,6 +305,12 @@ export function useHikvisionPlayer(anchorRef: Ref<HTMLElement | null>) {
     if (!data || data.source !== 'hik-embed') return
 
     if (data.type === 'hik-ready') {
+      if (warmupPending && warmupPending.length > 0) {
+        const ids = warmupPending
+        warmupPending = null
+        void sendWarmup(ids)
+        return
+      }
       tryStartOnce()
       return
     }
@@ -209,6 +326,10 @@ export function useHikvisionPlayer(anchorRef: Ref<HTMLElement | null>) {
     if (data.type === 'hik-playing') {
       status.value = 'playing'
       statusText.value = '预览中'
+      if (typeof data.deviceKey === 'string') {
+        const mapped = deviceKeyToId.get(data.deviceKey)
+        if (mapped) currentDeviceId.value = mapped
+      }
       if (typeof data.audioChannel === 'number') {
         audioChannel.value = data.audioChannel
         statusText.value = '预览成功，可对讲'
@@ -218,6 +339,13 @@ export function useHikvisionPlayer(anchorRef: Ref<HTMLElement | null>) {
         autoTalkAfterPlay = false
         void startTalk()
       }
+      return
+    }
+
+    if (data.type === 'hik-warmup-done') {
+      warmupDone = true
+      status.value = 'playing'
+      statusText.value = '预览中'
       return
     }
 
@@ -305,34 +433,15 @@ export function useHikvisionPlayer(anchorRef: Ref<HTMLElement | null>) {
 
     let cfg: DevicePreviewConfig
     try {
-      const res = await getDevicePreviewConfigApi(deviceId)
-      if (res.code !== 0 || !res.data?.ip) {
-        throw new Error(res.message || '获取摄像头配置失败')
-      }
-      cfg = res.data
+      cfg = await fetchPreviewConfig(deviceId)
     } catch (e) {
       status.value = 'error'
       statusText.value = e instanceof Error ? e.message : '获取摄像头配置失败'
       return
     }
 
-    // 切设备过程中若已改成别的 deviceId，丢弃过期结果
     if (deviceId !== pendingDeviceId) return
-
-    currentDeviceId.value = deviceId
-    statusText.value = '正在连接摄像头…'
-    postLayout(true)
-    postToIframe({
-      type: 'hik-start',
-      payload: {
-        ip: cfg.ip,
-        port: cfg.port,
-        username: cfg.username,
-        password: cfg.password,
-        channelId: cfg.channelId,
-        streamType: cfg.streamType,
-      },
-    })
+    await postConnect(deviceId, cfg, false)
   }
 
   function tryStartOnce() {
@@ -346,19 +455,30 @@ export function useHikvisionPlayer(anchorRef: Ref<HTMLElement | null>) {
     }, 50)
   }
 
+  function initIframe() {
+    if (iframeSrc.value) return
+    iframeSrc.value = `${PLAYER_URL}?t=${Date.now()}`
+  }
+
   function start(deviceId = DEFAULT_GUN_DEVICE_ID, opts?: HikStartOptions) {
     pendingDeviceId = deviceId
     currentDeviceId.value = deviceId
     ptzAutoOn = false
-    startSent = false
-    startAfterReady = true
     autoTalkAfterPlay = !!opts?.autoTalk
     talkOnlyMode = !!opts?.talkOnly
-    lastSentLayout = null
     talking.value = false
     talkBusy.value = false
     audioChannel.value = null
-    iframeSrc.value = `${PLAYER_URL}?t=${Date.now()}`
+
+    if (!iframeSrc.value) {
+      startSent = false
+      startAfterReady = true
+      lastSentLayout = null
+      initIframe()
+      return
+    }
+
+    void ensureDevice(deviceId)
   }
 
   function onIframeLoad() {
@@ -389,6 +509,9 @@ export function useHikvisionPlayer(anchorRef: Ref<HTMLElement | null>) {
         startSent = false
         startAfterReady = false
         audioChannel.value = null
+        warmupDone = false
+        warmupPending = null
+        deviceKeyToId.clear()
         status.value = 'idle'
         statusText.value = '实时摄像头画面区域'
         resolve()
@@ -504,8 +627,13 @@ export function useHikvisionPlayer(anchorRef: Ref<HTMLElement | null>) {
     talking,
     talkBusy,
     audioChannel,
+    initIframe,
     start,
+    warmupAll,
+    ensureDevice,
     stop,
+    hide,
+    setAnchor,
     onIframeLoad,
     captureJpegDataUrl,
     postLayout,

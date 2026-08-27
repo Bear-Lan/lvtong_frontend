@@ -27,6 +27,7 @@ import DetailDialog from '@/modules/history/DetailDialog.vue'
 import type { InspectionDetail } from '@/modules/history'
 import { formatVehicleSizeDisplay } from '@/modules/history/utils/passCodeDisplay'
 import CaptureCameraDialog from '@/components/capture/CaptureCameraDialog.vue'
+import HikvisionCaptureHost from '@/components/capture/HikvisionCaptureHost.vue'
 import type { CaptureKind } from '@/components/capture/CaptureCameraDialog.vue'
 import DrivingLicenseDialog from '@/components/capture/DrivingLicenseDialog.vue'
 import { useBookingStore } from '@/modules/booking'
@@ -2384,6 +2385,8 @@ const anyDialogOpen = computed(
 
 <template>
   <div class="dashboard">
+    <!-- 图像采集海康预览长连接（弹窗关闭也不断流） -->
+    <HikvisionCaptureHost />
     <AppHeader
       :username="auth.user?.realName"
       :ai-online="aiOnline"

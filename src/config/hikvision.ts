@@ -33,6 +33,13 @@ export const DEFAULT_GUN_DEVICE_ID = 'cam_lane'
 /** 预约弹窗右侧 / 可视对讲：devices.device_id */
 export const TALK_CAMERA_DEVICE_ID = 'cam_booking'
 
+/** 图像采集：需预热的全部物理相机（切换 Tab 不再重新登录） */
+export const HIK_CAPTURE_DEVICE_IDS = [
+  'cam_lane',
+  'cam_ptz',
+  'cam_booking',
+] as const
+
 /** 已接入的相机 Tab */
 export const HIK_ENABLED_CAMERAS = [
   '车顶相机',

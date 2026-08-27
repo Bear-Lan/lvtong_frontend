@@ -14,6 +14,8 @@
   var g_layout = null
   var g_layoutWaiters = []
   var g_analogInfoReady = false
+  /** 各设备登录会话：identify -> { cfg, channelId, analogReady, audioChannel, loggedIn } */
+  var g_sessions = {}
   /** 当前预览通道，供云台 ISAPI 使用 */
   var g_playChannelId = 1
   /** 对讲通道（I_GetAudioInfo） */
@@ -159,34 +161,199 @@
     })
   }
 
+  function cfgIdentify(cfg) {
+    return (cfg.ip || '') + '_' + String(cfg.port || 80)
+  }
+
+  function isAlreadyLoginError(oError) {
+    if (!oError) return false
+    var code = oError.errorCode != null ? oError.errorCode : oError.code
+    return code === 2001 || code === '2001'
+  }
+
   function login(cfg) {
+    return loginSafe(cfg).then(function (identify) {
+      g_deviceIdentify = identify
+    })
+  }
+
+  function loginSafe(cfg) {
+    var identify = cfgIdentify(cfg)
+    var sess = g_sessions[identify]
+    if (sess && sess.loggedIn) {
+      return Promise.resolve(identify)
+    }
+
     return new Promise(function (resolve, reject) {
       var ip = cfg.ip
       var port = String(cfg.port || 80)
       var username = cfg.username
       var password = cfg.password
-      g_deviceIdentify = ip + '_' + port
 
       var timer = setTimeout(function () {
         reject(new Error('设备登录超时'))
       }, 10000)
 
-      WebVideoCtrl.I_Login(ip, 1, port, username, password, {
-        timeout: 3000,
-        success: function () {
-          clearTimeout(timer)
-          resolve()
-        },
-        error: function (oError) {
-          clearTimeout(timer)
-          if (oError && oError.errorCode === 2001) {
-            resolve()
-            return
-          }
-          reject(new Error((oError && oError.errorMsg) || '设备登录失败'))
-        },
-      })
+      function finishOk() {
+        clearTimeout(timer)
+        if (!g_sessions[identify]) g_sessions[identify] = {}
+        g_sessions[identify].loggedIn = true
+        g_sessions[identify].cfg = cfg
+        resolve(identify)
+      }
+
+      function finishErr(oError) {
+        clearTimeout(timer)
+        if (isAlreadyLoginError(oError)) {
+          finishOk()
+          return
+        }
+        reject(
+          new Error(
+            (oError && oError.errorMsg) ||
+              (oError && oError.message) ||
+              '设备登录失败',
+          ),
+        )
+      }
+
+      try {
+        var ret = WebVideoCtrl.I_Login(ip, 1, port, username, password, {
+          timeout: 3000,
+          success: finishOk,
+          error: finishErr,
+        })
+        if (ret && typeof ret.then === 'function') {
+          ret.then(finishOk, finishErr)
+        }
+      } catch (e) {
+        finishErr(e)
+      }
     })
+  }
+
+  function getFirstChannelIdFor(identify) {
+    return new Promise(function (resolve) {
+      var fallback = 1
+      var settled = false
+      function done(id) {
+        if (settled) return
+        settled = true
+        resolve(id > 0 ? id : fallback)
+      }
+      setTimeout(function () {
+        done(fallback)
+      }, 2000)
+
+      try {
+        WebVideoCtrl.I_GetAnalogChannelInfo(identify, {
+          success: function (xmlDoc) {
+            var id = parseInt(
+              $(xmlDoc).find('VideoInputChannel').eq(0).find('id').eq(0).text(),
+              10,
+            )
+            if (id > 0) done(id)
+          },
+          error: function () {},
+        })
+      } catch (e) {}
+
+      try {
+        WebVideoCtrl.I_GetDigitalChannelInfo(identify, {
+          success: function (xmlDoc) {
+            var id = parseInt(
+              $(xmlDoc).find('InputProxyChannelStatus').eq(0).find('id').eq(0).text(),
+              10,
+            )
+            if (id > 0) done(id)
+          },
+          error: function () {},
+        })
+      } catch (e) {}
+    })
+  }
+
+  function ensureAnalogChannelInfoFor(identify) {
+    var sess = g_sessions[identify]
+    if (!sess) {
+      sess = g_sessions[identify] = {}
+    }
+    if (sess.analogReady) return Promise.resolve()
+
+    return new Promise(function (resolve) {
+      var settled = false
+      function done() {
+        if (settled) return
+        settled = true
+        sess.analogReady = true
+        resolve()
+      }
+      setTimeout(done, 2000)
+      try {
+        WebVideoCtrl.I_GetAnalogChannelInfo(identify, {
+          success: done,
+          error: done,
+        })
+      } catch (e) {
+        done()
+      }
+    })
+  }
+
+  function stopPlayOnly() {
+    return new Promise(function (resolve) {
+      if (!g_playing) {
+        resolve()
+        return
+      }
+      try {
+        WebVideoCtrl.I_Stop({
+          success: function () {
+            g_playing = false
+            resolve()
+          },
+          error: function () {
+            g_playing = false
+            resolve()
+          },
+        })
+      } catch (e) {
+        g_playing = false
+        resolve()
+      }
+    })
+  }
+
+  async function switchToDevice(cfg) {
+    var identify = await loginSafe(cfg)
+    var sess = g_sessions[identify] || (g_sessions[identify] = { cfg: cfg })
+    sess.cfg = cfg
+    g_deviceIdentify = identify
+    g_analogInfoReady = !!sess.analogReady
+
+    await ensureAnalogChannelInfoFor(identify)
+    var channelId = cfg.channelId || sess.channelId
+    if (!channelId) {
+      channelId = await getFirstChannelIdFor(identify)
+      sess.channelId = channelId > 0 ? channelId : 1
+    }
+    g_playChannelId = channelId > 0 ? channelId : 1
+
+    if (g_playing) {
+      await stopPlayOnly()
+    }
+
+    await startPlay(g_playChannelId, cfg.streamType || 1)
+    if (g_layout) applyLayout(g_layout, true)
+
+    var audioCh = sess.audioChannel
+    if (audioCh == null) {
+      try {
+        audioCh = await getAudioInfo()
+        sess.audioChannel = audioCh
+      } catch (eAudio) {}
+    }
+    return { identify: identify, audioChannel: audioCh }
   }
 
   function getFirstChannelId() {
@@ -538,6 +705,7 @@
         g_inited = false
         g_deviceIdentify = ''
         g_analogInfoReady = false
+        g_sessions = {}
         g_playChannelId = 1
         g_audioChannel = null
         try {
@@ -619,7 +787,6 @@
   async function handleStart(cfg) {
     if (g_busy) return
     g_busy = true
-    g_analogInfoReady = false
     try {
       status('正在定位预览区域…', 'loading')
       await waitForLayout(4000)
@@ -627,40 +794,16 @@
 
       status('正在初始化插件…', 'loading')
       await initPlugin()
-      // Insert 后强制对齐一次即可，之后无变化不再 Resize
       if (g_layout) applyLayout(g_layout, true)
 
-      status('正在登录设备…', 'loading')
-      await login(cfg)
-
-      // 无论 config 是否带 channelId，都要先拉模拟通道以填充 iAnalogChannelNum
-      status('正在获取通道…', 'loading')
-      await ensureAnalogChannelInfo()
-      await new Promise(function (r) {
-        setTimeout(r, 300)
+      status('正在连接摄像头…', 'loading')
+      var result = await switchToDevice(cfg)
+      status(result.audioChannel != null ? '预览成功，可对讲' : '预览中', 'playing')
+      post({
+        type: 'hik-playing',
+        audioChannel: result.audioChannel,
+        deviceKey: result.identify,
       })
-      var channelId = cfg.channelId || (await getFirstChannelId())
-      g_playChannelId = channelId > 0 ? channelId : 1
-      status('正在开启预览(通道' + g_playChannelId + ')…', 'loading')
-      await new Promise(function (r) {
-        setTimeout(r, 300)
-      })
-      await startPlay(g_playChannelId, cfg.streamType || 1)
-      // 出流后对齐一次
-      if (g_layout) applyLayout(g_layout, true)
-
-      var audioCh = null
-      try {
-        status('获取对讲通道…', 'loading')
-        audioCh = await getAudioInfo()
-      } catch (eAudio) {
-        post({
-          type: 'hik-log',
-          text: '获取对讲通道失败: ' + ((eAudio && eAudio.message) || eAudio),
-        })
-      }
-      status(audioCh != null ? '预览成功，可对讲' : '预览中', 'playing')
-      post({ type: 'hik-playing', audioChannel: audioCh })
     } catch (e) {
       status((e && e.message) || '启动失败', 'error')
       try {
@@ -677,6 +820,84 @@
       await destroyAll()
     } catch (e) {}
     post({ type: 'hik-stopped' })
+  }
+
+  /** 预热：登录全部相机，默认设备出流，切换时只停流/换设备 */
+  async function handleWarmup(payload) {
+    if (g_busy) return
+    g_busy = true
+    try {
+      var list = (payload && payload.devices) || []
+      var defaultIndex =
+        payload && payload.defaultIndex != null ? payload.defaultIndex : 0
+      if (defaultIndex < 0) defaultIndex = 0
+      if (defaultIndex >= list.length) defaultIndex = 0
+
+      status('正在定位预览区域…', 'loading')
+      await waitForLayout(4000)
+      if (g_layout) applyLayout(g_layout, true)
+
+      status('正在初始化插件…', 'loading')
+      await initPlugin()
+      if (g_layout) applyLayout(g_layout, true)
+
+      for (var i = 0; i < list.length; i++) {
+        var cfg = list[i]
+        var identify = cfgIdentify(cfg)
+        status('预热摄像头 ' + (i + 1) + '/' + list.length + '…', 'loading')
+        await loginSafe(cfg)
+        await ensureAnalogChannelInfoFor(identify)
+        var sess = g_sessions[identify] || (g_sessions[identify] = { cfg: cfg })
+        if (!sess.channelId) {
+          var ch = cfg.channelId || (await getFirstChannelIdFor(identify))
+          sess.channelId = ch > 0 ? ch : 1
+        }
+      }
+
+      var result = { identify: '', audioChannel: null }
+      if (list.length > 0) {
+        status('正在开启默认预览…', 'loading')
+        result = await switchToDevice(list[defaultIndex])
+      }
+
+      status('预览中', 'playing')
+      post({
+        type: 'hik-playing',
+        audioChannel: result.audioChannel,
+        deviceKey: result.identify,
+      })
+      post({ type: 'hik-warmup-done', count: list.length })
+    } catch (e) {
+      status((e && e.message) || '预热失败', 'error')
+      post({ type: 'hik-error', message: (e && e.message) || '预热失败' })
+    } finally {
+      g_busy = false
+    }
+  }
+
+  /** 切换设备：不登出，仅停流后换设备预览 */
+  async function handleSwitch(cfg) {
+    if (g_busy) return
+    g_busy = true
+    try {
+      status('正在切换摄像头…', 'loading')
+      var result = await switchToDevice(cfg)
+      status('预览中', 'playing')
+      post({
+        type: 'hik-playing',
+        audioChannel: result.audioChannel,
+        deviceKey: result.identify,
+      })
+    } catch (e) {
+      status((e && e.message) || '切换失败', 'error')
+      post({ type: 'hik-error', message: (e && e.message) || '切换失败' })
+    } finally {
+      g_busy = false
+    }
+  }
+
+  async function handleReconnect(cfg) {
+    await handleSwitch(cfg)
   }
 
   async function handleTalkStart() {
@@ -1088,6 +1309,10 @@
       handleStart(data.payload || {})
     } else if (data.type === 'hik-stop') {
       handleStop()
+    } else if (data.type === 'hik-warmup') {
+      handleWarmup(data.payload || {})
+    } else if (data.type === 'hik-switch' || data.type === 'hik-reconnect') {
+      handleSwitch(data.payload || {})
     } else if (data.type === 'hik-capture') {
       handleCapture()
     } else if (data.type === 'hik-ptz') {

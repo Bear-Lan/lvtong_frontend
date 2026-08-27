@@ -11,7 +11,7 @@ import {
   HIK_ENABLED_CAMERAS,
   resolveCameraDeviceId,
 } from '@/config/hikvision'
-import { useHikvisionPlayer } from '@/composables/useHikvisionPlayer'
+import { getHikCapturePlayer } from '@/composables/hikCaptureContext'
 
 export type CaptureKind = 'head' | 'tail' | 'top' | 'goods' | 'evidence'
 
@@ -70,22 +70,22 @@ const closing = ref(false)
 /** 黑色预览锚点：把屏幕坐标发给全屏 iframe，在内部摆插件 */
 const liveStageRef = ref<HTMLElement | null>(null)
 
+const hik = getHikCapturePlayer()
+
 const {
   status: hikStatus,
   statusText: hikStatusText,
-  iframeRef,
-  iframeSrc,
   currentDeviceId,
-  start: startHik,
-  stop: stopHik,
-  onIframeLoad,
+  setAnchor,
+  ensureDevice,
+  hide: hideHik,
   captureJpegDataUrl,
   postLayout,
   ptzStart,
   ptzStop,
   setPreset,
   goPreset,
-} = useHikvisionPlayer(liveStageRef)
+} = hik
 
 const liveHint = computed(() => hikStatusText.value || '实时摄像头画面区域')
 const showLiveHint = computed(() => hikStatus.value !== 'playing')
@@ -207,14 +207,19 @@ onMounted(async () => {
   window.addEventListener('keydown', onPresetKeydown)
   await nextTick()
   await new Promise<void>((r) => requestAnimationFrame(() => r()))
-  startHik(resolveCameraDeviceId(activeCamera.value))
-  // 布局稳定后强制下发一次坐标（仅一次，避免轮询导致黑闪）
-  window.setTimeout(() => postLayout(true), 300)
+  if (liveStageRef.value) setAnchor(liveStageRef.value)
+  await ensureDevice(resolveCameraDeviceId(activeCamera.value))
+  window.setTimeout(() => postLayout(true), 120)
 })
+
+function detachHikPreview() {
+  hideHik()
+  setAnchor(null)
+}
 
 onBeforeUnmount(() => {
   window.removeEventListener('keydown', onPresetKeydown)
-  void stopHik()
+  detachHikPreview()
 })
 
 async function selectCamera(name: string) {
@@ -233,10 +238,8 @@ async function selectCamera(name: string) {
   presetHint.value = ''
   loadPresetConfigured(nextId)
   try {
-    await stopHik()
-    await nextTick()
-    startHik(nextId)
-    window.setTimeout(() => postLayout(true), 300)
+    await ensureDevice(nextId)
+    window.setTimeout(() => postLayout(true), 120)
   } finally {
     switchingCamera.value = false
   }
@@ -327,8 +330,7 @@ async function closeDialog(after?: () => void) {
   if (closing.value) return
   closing.value = true
   try {
-    // 必须先销毁原生插件窗口，再卸 DOM，否则主界面会残留不透明方块
-    await stopHik()
+    detachHikPreview()
   } finally {
     after?.()
     emit('close')
@@ -598,17 +600,6 @@ function openPreview() {
         @change="onFileChosen"
       />
     </div>
-
-    <!-- 全屏透明 iframe：插件 HWND 按黑区坐标落在正确位置；pointer-events:none 不挡按钮 -->
-    <iframe
-      v-if="iframeSrc"
-      ref="iframeRef"
-      class="hik-iframe-fs"
-      :src="iframeSrc"
-      title="摄像头预览"
-      allow="fullscreen"
-      @load="onIframeLoad"
-    />
   </div>
   </Teleport>
 </template>
@@ -753,20 +744,6 @@ function openPreview() {
   inset: 0;
   width: 100%;
   height: 100%;
-}
-
-/* 全屏透明：内部 #divPlugin 用父页下发的黑区屏幕坐标定位 */
-.hik-iframe-fs {
-  position: fixed;
-  inset: 0;
-  width: 100vw;
-  height: 100vh;
-  border: 0;
-  margin: 0;
-  padding: 0;
-  background: transparent;
-  pointer-events: none;
-  z-index: 10001;
 }
 
 .live-status {
