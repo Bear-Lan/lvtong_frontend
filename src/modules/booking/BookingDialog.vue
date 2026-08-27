@@ -1,7 +1,7 @@
 <script setup lang="ts">
 /**
  * 预约处理 — 1:1 对齐 Qt OrderDialog.ui / OrderDialog.cpp
- * 右侧：WHEP 看画面（cam4）+ 海康插件只做对讲（HWND 屏外）
+ * 右侧：WHEP 看画面（cam4）+ 复用 Dashboard 海康长连接只做对讲（HWND 屏外）
  */
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import ConfirmDialog from './components/ConfirmDialog.vue'
@@ -10,9 +10,12 @@ import SlipToggle from './components/SlipToggle.vue'
 import { useBookingDialog } from './composables/useBookingDialog'
 import type { BookingAcceptPayload } from './types'
 import { useWhepPlayer } from '@/composables/useWhepPlayer'
-import { useHikvisionPlayer } from '@/composables/useHikvisionPlayer'
+import { getHikCapturePlayer } from '@/composables/hikCaptureContext'
 import { TALK_WHEP_URL } from '@/config/liveVideo'
-import { TALK_CAMERA_DEVICE_ID } from '@/config/hikvision'
+import {
+  DEFAULT_GUN_DEVICE_ID,
+  TALK_CAMERA_DEVICE_ID,
+} from '@/config/hikvision'
 
 const emit = defineEmits<{
   close: []
@@ -80,23 +83,21 @@ async function startBookingVideo() {
   }
 }
 
-// ---- 对讲：播报完成后再自动开对讲，播报中必须关闭 ----
-const hikTalkAnchorRef = ref<HTMLElement | null>(null)
+// ---- 对讲：复用 Dashboard 长连接宿主，避免双 iframe 抢插件/TwoWayAudio ----
+const hik = getHikCapturePlayer()
 const {
   status: talkStatus,
   statusText: talkStatusText,
   talking,
   talkBusy,
-  iframeRef,
-  iframeSrc,
-  start: startHik,
-  stop: stopHik,
-  onIframeLoad,
+  hide: hideHikTalk,
   hidePluginOverlay,
-  toggleTalk,
+  setTalkOnly,
+  ensureDevice: ensureTalkDevice,
   stopTalk,
   startTalk,
-} = useHikvisionPlayer(hikTalkAnchorRef)
+  toggleTalk,
+} = hik
 
 /** 后端 /booking/open 阻塞播 step2 期间 */
 const announcePlaying = ref(true)
@@ -167,19 +168,29 @@ function onRadarImageError() {
   radarImageReady.value = false
 }
 
+async function releaseBookingTalk() {
+  try {
+    stopTalk()
+  } catch {
+    /* ignore */
+  }
+  setTalkOnly(false)
+  try {
+    await ensureTalkDevice(DEFAULT_GUN_DEVICE_ID)
+  } catch {
+    /* ignore */
+  }
+  hideHikTalk()
+}
+
 async function handleConfirmYes() {
   try {
-    // 受理/驳回前先停 WHEP + 海康对讲，再接 step3（可被抬杆 step4 打断）
     try {
       await stopVideo()
     } catch {
       /* ignore */
     }
-    try {
-      await stopHik()
-    } catch {
-      /* ignore */
-    }
+    await releaseBookingTalk()
     const result = await confirmYes()
     if (result?.kind === 'accept') {
       emit('accept', result.payload)
@@ -215,6 +226,8 @@ watch(confirmVisible, (visible) => {
 onMounted(async () => {
   await nextTick()
   await new Promise<void>((r) => requestAnimationFrame(() => r()))
+  setTalkOnly(true)
+  hideHikTalk()
   // 1) 开窗立刻：WHEP 视频（不占 TwoWayAudio）
   void startBookingVideo()
   try {
@@ -222,8 +235,8 @@ onMounted(async () => {
   } catch {
     /* ignore */
   }
-  // 2) 预热海康插件，不 autoTalk（step2 占用 TwoWayAudio）
-  startHik(TALK_CAMERA_DEVICE_ID, { autoTalk: false, talkOnly: true })
+  // 2) 切到预约机（长连接已预热，仅 hik-switch）
+  void ensureTalkDevice(TALK_CAMERA_DEVICE_ID)
   // 3) /open 等 step2；雷达图与之并行立刻拉取
   announcePlaying.value = true
   try {
@@ -231,12 +244,13 @@ onMounted(async () => {
   } finally {
     announcePlaying.value = false
   }
-  // 4) 播报结束、通道释放后再开对讲
+  // 4) 播报结束、后端 release TwoWayAudio 后再开对讲
   void (async () => {
-    for (let i = 0; i < 50; i++) {
+    for (let i = 0; i < 80; i++) {
       if (talkStatus.value === 'playing') break
       await new Promise<void>((r) => window.setTimeout(r, 100))
     }
+    await new Promise<void>((r) => window.setTimeout(r, 450))
     await startTalk()
   })()
 })
@@ -244,7 +258,7 @@ onMounted(async () => {
 onBeforeUnmount(() => {
   window.clearTimeout(videoRetryTimer)
   void stopVideo()
-  void stopHik()
+  void releaseBookingTalk()
 })
 </script>
 
@@ -279,12 +293,6 @@ onBeforeUnmount(() => {
           </div>
         </div>
       </div>
-
-      <div
-        ref="hikTalkAnchorRef"
-        class="hik-talk-anchor"
-        aria-hidden="true"
-      />
 
       <div class="tool-row">
         <span class="sp sp-40" />
@@ -379,15 +387,6 @@ onBeforeUnmount(() => {
       @cancel="cancelConfirm"
     />
 
-    <iframe
-      v-if="iframeSrc"
-      ref="iframeRef"
-      class="hik-iframe-fs"
-      :src="iframeSrc"
-      title="预约对讲"
-      allow="microphone; fullscreen"
-      @load="onIframeLoad"
-    />
   </div>
 </template>
 
@@ -486,31 +485,6 @@ onBeforeUnmount(() => {
   &.err {
     color: #c0392b;
   }
-}
-
-/* 插件 HWND 锚点：屏外，不影响 WHEP 画面与按钮点击 */
-.hik-talk-anchor {
-  position: fixed;
-  left: -10000px;
-  top: -10000px;
-  width: 160px;
-  height: 90px;
-  overflow: hidden;
-  pointer-events: none;
-  opacity: 0;
-}
-
-.hik-iframe-fs {
-  position: fixed;
-  inset: 0;
-  width: 100vw;
-  height: 100vh;
-  border: 0;
-  margin: 0;
-  padding: 0;
-  background: transparent;
-  pointer-events: none;
-  z-index: 1001;
 }
 
 .tool-row {
